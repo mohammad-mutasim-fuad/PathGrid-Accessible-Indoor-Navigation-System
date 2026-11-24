@@ -6,6 +6,7 @@ import {
 import { useAdminAuth } from './AdminAuthContext';
 import { describeAuthError, isDemoModeAvailable } from '../../services/authService';
 import { BUTTON, ErrorNotice, INPUT } from './AdminUi';
+import OfflineBanner from '../OfflineBanner';
 
 const DEFAULT_DESTINATION = '/admin/dashboard';
 
@@ -40,8 +41,9 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center bg-slate-100 px-4 py-10">
-      <div className="w-full max-w-md">
+    <div className="flex min-h-dvh flex-col bg-slate-100">
+      <OfflineBanner variant="admin" />
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-4 py-10">
         <div className="mb-6 flex items-center justify-center gap-2 text-slate-900">
           <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-700 text-white">
             <MapIcon aria-hidden="true" className="h-6 w-6" />

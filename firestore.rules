@@ -1,0 +1,121 @@
+rules_version = '2';
+
+// PathGrid Firestore security rules.
+//
+//  - Public visitors need ZERO login: building and floor map documents are
+//    world-readable.
+//  - Every write requires an authenticated ADMIN, identified by either
+//      a) a custom claim `admin: true` (set with the Admin SDK), or
+//      b) a document at admins/{uid} (created in the Firebase console).
+//    Signing in alone is not enough.
+//  - Writes are validated against the PRD schema (Section 3) so a bad client
+//    or compromised admin session cannot store malformed map data.
+//  - Everything else is denied.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- auth
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.get('admin', false) == true
+        || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // ---------------------------------------------------------- validation
+
+    function isOptionalString(data, field, maxLength) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLength);
+    }
+
+    function isOptionalPositiveNumber(data, field) {
+      return !(field in data) || (data[field] is number && data[field] > 0);
+    }
+
+    function isOptionalInt(data, field, min, max) {
+      return !(field in data) || (data[field] is int && data[field] >= min && data[field] <= max);
+    }
+
+    function isValidBuilding(buildingId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'building_id', 'building_name', 'total_floors', 'default_floor', 'isMapUpdated',
+          'last_updated_timestamp', 'canvas_width', 'canvas_height', 'units_per_meter',
+          'transition_weights'
+        ])
+        && data.building_id == buildingId
+        && isOptionalString(data, 'building_name', 200)
+        && isOptionalInt(data, 'total_floors', 0, 200)
+        && isOptionalInt(data, 'default_floor', 0, 200)
+        && (!('isMapUpdated' in data) || data.isMapUpdated is bool)
+        && isOptionalString(data, 'last_updated_timestamp', 40)
+        && isOptionalPositiveNumber(data, 'canvas_width')
+        && isOptionalPositiveNumber(data, 'canvas_height')
+        && isOptionalPositiveNumber(data, 'units_per_meter')
+        && (!('transition_weights' in data) || data.transition_weights is map);
+    }
+
+    function isValidTopology(topology) {
+      return topology is map
+        && topology.keys().hasOnly(['nodes', 'edges'])
+        && topology.nodes is list && topology.nodes.size() <= 5000
+        && topology.edges is list && topology.edges.size() <= 20000;
+    }
+
+    // Floor document ids follow {building_id}_FL{nn}, e.g. ENG_MAIN_FL01.
+    function expectedFloorId(data) {
+      return data.building_id + '_FL' + (data.floor_number < 10 ? '0' : '') + string(data.floor_number);
+    }
+
+    function isValidFloor(floorId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['building_id', 'floor_number', 'floor_plan_image_url', 'graph_topology'])
+        && data.building_id is string
+        && data.floor_number is int && data.floor_number >= 0 && data.floor_number <= 200
+        && floorId == expectedFloorId(data)
+        // existsAfter: a batch may create the building and its floors together.
+        && existsAfter(/databases/$(database)/documents/buildings/$(data.building_id))
+        && isOptionalString(data, 'floor_plan_image_url', 2048)
+        && (!('graph_topology' in data) || isValidTopology(data.graph_topology));
+    }
+
+    // Identity fields may never change once written.
+    function keepsField(field) {
+      return request.resource.data[field] == resource.data[field];
+    }
+
+    // --------------------------------------------------------- collections
+
+    match /buildings/{buildingId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidBuilding(buildingId);
+      allow update: if isAdmin() && isValidBuilding(buildingId) && keepsField('building_id');
+      allow delete: if isAdmin();
+    }
+
+    match /floors/{floorId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidFloor(floorId);
+      allow update: if isAdmin() && isValidFloor(floorId)
+        && keepsField('building_id') && keepsField('floor_number');
+      allow delete: if isAdmin();
+    }
+
+    // Admin allow-list. Managed only from the Firebase console / Admin SDK.
+    // A signed-in user may read their own entry (lets the UI check status).
+    match /admins/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Deny everything not explicitly allowed above.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { CircleQuestionMark, Lock, Map as MapIcon, WifiOff } from 'lucide-react';
+import OfflineBanner from './OfflineBanner';
 
 const linkClass = 'flex h-12 min-w-12 items-center justify-center gap-1.5 rounded-xl px-3 text-sm font-semibold text-white hover:bg-white/15 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-white';
 
@@ -10,6 +11,15 @@ const linkClass = 'flex h-12 min-w-12 items-center justify-center gap-1.5 rounde
  * @param {boolean} [props.isDemoData] - show the "Demo data" badge (mock/offline source)
  */
 export default function AppHeader({ subtitle = '', isDemoData = false }) {
+  return (
+    <>
+      <AppHeaderBar subtitle={subtitle} isDemoData={isDemoData} />
+      <OfflineBanner />
+    </>
+  );
+}
+
+function AppHeaderBar({ subtitle, isDemoData }) {
   return (
     <header className="z-30 flex shrink-0 items-center gap-2 bg-slate-900 px-3 py-1 text-white shadow-md pt-[max(0.25rem,env(safe-area-inset-top))]">
       <Link
