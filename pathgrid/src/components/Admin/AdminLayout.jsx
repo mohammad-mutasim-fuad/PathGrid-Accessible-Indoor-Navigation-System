@@ -6,6 +6,7 @@ import {
 import { useAdminAuth } from './AdminAuthContext';
 import { useAdminData } from './AdminDataContext';
 import { AdminLoading, ErrorNotice } from './AdminUi';
+import OfflineBanner from '../OfflineBanner';
 
 const NAV_ITEMS = [
   { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -91,6 +92,7 @@ export default function AdminLayout() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <OfflineBanner variant="admin" />
         {isDemo && (
           <p role="note" className="flex items-center gap-2 bg-amber-300 px-4 py-2 text-sm font-semibold text-amber-950">
             <FlaskConical aria-hidden="true" className="h-4 w-4 shrink-0" />
