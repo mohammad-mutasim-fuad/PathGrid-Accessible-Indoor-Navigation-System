@@ -1,0 +1,825 @@
+{
+  "buildings": [
+    {
+      "building_id": "ENG_MAIN",
+      "building_name": "Engineering Complex",
+      "total_floors": 3,
+      "default_floor": 1,
+      "isMapUpdated": false,
+      "last_updated_timestamp": "2026-08-01T10:30:00Z",
+      "canvas_width": 1000,
+      "canvas_height": 600,
+      "units_per_meter": 10,
+      "transition_weights": {
+        "elevator": 10,
+        "stairs": 15
+      }
+    }
+  ],
+  "floors": [
+    {
+      "building_id": "ENG_MAIN",
+      "floor_number": 1,
+      "floor_plan_image_url": "",
+      "graph_topology": {
+        "nodes": [
+          {
+            "id": "F1_HALL_1",
+            "name": "Hallway 1-A",
+            "x": 150,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F1_HALL_2",
+            "name": "Hallway 1-B",
+            "x": 350,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F1_HALL_3",
+            "name": "Hallway 1-C",
+            "x": 500,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F1_HALL_4",
+            "name": "Hallway 1-D",
+            "x": 650,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F1_HALL_5",
+            "name": "Hallway 1-E",
+            "x": 850,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "N101",
+            "name": "Reception",
+            "x": 150,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N102",
+            "name": "Lecture Hall 101",
+            "x": 350,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N103",
+            "name": "Lab 102 - Electronics",
+            "x": 650,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N104",
+            "name": "Cafeteria",
+            "x": 850,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N105",
+            "name": "Accessible Restroom",
+            "x": 350,
+            "y": 450,
+            "type": "restroom",
+            "is_accessible": true
+          },
+          {
+            "id": "N106",
+            "name": "Lab 103 - Materials",
+            "x": 650,
+            "y": 450,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N107",
+            "name": "Security Office",
+            "x": 850,
+            "y": 450,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "F1_STAIRS_A",
+            "name": "Staircase A (West)",
+            "x": 150,
+            "y": 470,
+            "type": "stairs",
+            "is_accessible": false,
+            "transition_id": "STAIRS_A"
+          },
+          {
+            "id": "F1_STAIRS_B",
+            "name": "Staircase B (East)",
+            "x": 940,
+            "y": 220,
+            "type": "stairs",
+            "is_accessible": false,
+            "transition_id": "STAIRS_B"
+          },
+          {
+            "id": "F1_ELEV_1",
+            "name": "Elevator 1 (Central)",
+            "x": 500,
+            "y": 450,
+            "type": "elevator",
+            "transition_id": "ELEV_1",
+            "out_of_service": false,
+            "is_accessible": true
+          },
+          {
+            "id": "F1_ELEV_2",
+            "name": "Elevator 2 (East)",
+            "x": 940,
+            "y": 400,
+            "type": "elevator",
+            "transition_id": "ELEV_2",
+            "out_of_service": true,
+            "is_accessible": true
+          },
+          {
+            "id": "N100",
+            "name": "Main Entrance (West)",
+            "x": 40,
+            "y": 300,
+            "type": "entrance",
+            "is_accessible": true
+          },
+          {
+            "id": "N199",
+            "name": "Side Entrance (East, steps)",
+            "x": 960,
+            "y": 300,
+            "type": "entrance",
+            "is_accessible": false
+          }
+        ],
+        "edges": [
+          {
+            "source": "F1_HALL_1",
+            "target": "F1_HALL_2",
+            "weight": 20,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_2",
+            "target": "F1_HALL_3",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_3",
+            "target": "F1_HALL_4",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_4",
+            "target": "F1_HALL_5",
+            "weight": 20,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_1",
+            "target": "N101",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_2",
+            "target": "N102",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_4",
+            "target": "N103",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_5",
+            "target": "N104",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_2",
+            "target": "N105",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_4",
+            "target": "N106",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_5",
+            "target": "N107",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_1",
+            "target": "F1_STAIRS_A",
+            "weight": 17,
+            "type": "stairs",
+            "is_accessible": false
+          },
+          {
+            "source": "F1_HALL_5",
+            "target": "F1_STAIRS_B",
+            "weight": 12,
+            "type": "stairs",
+            "is_accessible": false
+          },
+          {
+            "source": "F1_HALL_3",
+            "target": "F1_ELEV_1",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_5",
+            "target": "F1_ELEV_2",
+            "weight": 13.5,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "N100",
+            "target": "F1_HALL_1",
+            "weight": 11,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F1_HALL_5",
+            "target": "N199",
+            "weight": 11,
+            "type": "stairs",
+            "is_accessible": false
+          }
+        ]
+      }
+    },
+    {
+      "building_id": "ENG_MAIN",
+      "floor_number": 2,
+      "floor_plan_image_url": "",
+      "graph_topology": {
+        "nodes": [
+          {
+            "id": "F2_HALL_1",
+            "name": "Hallway 2-A",
+            "x": 150,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F2_HALL_2",
+            "name": "Hallway 2-B",
+            "x": 350,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F2_HALL_3",
+            "name": "Hallway 2-C",
+            "x": 500,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F2_HALL_4",
+            "name": "Hallway 2-D",
+            "x": 650,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F2_HALL_5",
+            "name": "Hallway 2-E",
+            "x": 850,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F2_RAMP",
+            "name": "Ramp Alcove",
+            "x": 575,
+            "y": 220,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "N201",
+            "name": "Lecture Hall 201",
+            "x": 150,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N202",
+            "name": "Computer Lab 202",
+            "x": 350,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N203",
+            "name": "Lab 203 - Networks",
+            "x": 650,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N204",
+            "name": "Library Annex",
+            "x": 850,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N205",
+            "name": "Restroom (Floor 2)",
+            "x": 350,
+            "y": 450,
+            "type": "restroom",
+            "is_accessible": true
+          },
+          {
+            "id": "N206",
+            "name": "Faculty Offices 204",
+            "x": 650,
+            "y": 450,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N207",
+            "name": "Study Lounge",
+            "x": 850,
+            "y": 450,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "F2_STAIRS_A",
+            "name": "Staircase A (West)",
+            "x": 150,
+            "y": 470,
+            "type": "stairs",
+            "is_accessible": false,
+            "transition_id": "STAIRS_A"
+          },
+          {
+            "id": "F2_STAIRS_B",
+            "name": "Staircase B (East)",
+            "x": 940,
+            "y": 220,
+            "type": "stairs",
+            "is_accessible": false,
+            "transition_id": "STAIRS_B"
+          },
+          {
+            "id": "F2_ELEV_1",
+            "name": "Elevator 1 (Central)",
+            "x": 500,
+            "y": 450,
+            "type": "elevator",
+            "transition_id": "ELEV_1",
+            "out_of_service": false,
+            "is_accessible": true
+          },
+          {
+            "id": "F2_ELEV_2",
+            "name": "Elevator 2 (East)",
+            "x": 940,
+            "y": 400,
+            "type": "elevator",
+            "transition_id": "ELEV_2",
+            "out_of_service": true,
+            "is_accessible": true
+          }
+        ],
+        "edges": [
+          {
+            "source": "F2_HALL_1",
+            "target": "F2_HALL_2",
+            "weight": 20,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_2",
+            "target": "F2_HALL_3",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_3",
+            "target": "F2_HALL_4",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": false,
+            "note": "Two steps - no ramp"
+          },
+          {
+            "source": "F2_HALL_3",
+            "target": "F2_RAMP",
+            "weight": 11,
+            "type": "ramp",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_RAMP",
+            "target": "F2_HALL_4",
+            "weight": 11,
+            "type": "ramp",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_4",
+            "target": "F2_HALL_5",
+            "weight": 20,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_1",
+            "target": "N201",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_2",
+            "target": "N202",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_4",
+            "target": "N203",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_5",
+            "target": "N204",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_2",
+            "target": "N205",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_4",
+            "target": "N206",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_5",
+            "target": "N207",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_1",
+            "target": "F2_STAIRS_A",
+            "weight": 17,
+            "type": "stairs",
+            "is_accessible": false
+          },
+          {
+            "source": "F2_HALL_5",
+            "target": "F2_STAIRS_B",
+            "weight": 12,
+            "type": "stairs",
+            "is_accessible": false
+          },
+          {
+            "source": "F2_HALL_3",
+            "target": "F2_ELEV_1",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F2_HALL_5",
+            "target": "F2_ELEV_2",
+            "weight": 13.5,
+            "type": "corridor",
+            "is_accessible": true
+          }
+        ]
+      }
+    },
+    {
+      "building_id": "ENG_MAIN",
+      "floor_number": 3,
+      "floor_plan_image_url": "",
+      "graph_topology": {
+        "nodes": [
+          {
+            "id": "F3_HALL_1",
+            "name": "Hallway 3-A",
+            "x": 150,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F3_HALL_2",
+            "name": "Hallway 3-B",
+            "x": 350,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F3_HALL_3",
+            "name": "Hallway 3-C",
+            "x": 500,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F3_HALL_4",
+            "name": "Hallway 3-D",
+            "x": 650,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "F3_HALL_5",
+            "name": "Hallway 3-E",
+            "x": 850,
+            "y": 300,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "id": "N301",
+            "name": "Seminar Room 301",
+            "x": 150,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N302",
+            "name": "Robotics Lab 302",
+            "x": 350,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N303",
+            "name": "Research Lab 304",
+            "x": 650,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N304",
+            "name": "Dean's Office",
+            "x": 850,
+            "y": 150,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N305",
+            "name": "Restroom (Floor 3)",
+            "x": 350,
+            "y": 450,
+            "type": "restroom",
+            "is_accessible": true
+          },
+          {
+            "id": "N306",
+            "name": "Conference Room 305",
+            "x": 650,
+            "y": 450,
+            "type": "room",
+            "is_accessible": true
+          },
+          {
+            "id": "N307",
+            "name": "Server Room (Raised Floor)",
+            "x": 850,
+            "y": 450,
+            "type": "room",
+            "is_accessible": false
+          },
+          {
+            "id": "F3_STAIRS_A",
+            "name": "Staircase A (West)",
+            "x": 150,
+            "y": 470,
+            "type": "stairs",
+            "is_accessible": false,
+            "transition_id": "STAIRS_A"
+          },
+          {
+            "id": "F3_STAIRS_B",
+            "name": "Staircase B (East)",
+            "x": 940,
+            "y": 220,
+            "type": "stairs",
+            "is_accessible": false,
+            "transition_id": "STAIRS_B"
+          },
+          {
+            "id": "F3_ELEV_1",
+            "name": "Elevator 1 (Central)",
+            "x": 500,
+            "y": 450,
+            "type": "elevator",
+            "transition_id": "ELEV_1",
+            "out_of_service": false,
+            "is_accessible": true
+          },
+          {
+            "id": "F3_ELEV_2",
+            "name": "Elevator 2 (East)",
+            "x": 940,
+            "y": 400,
+            "type": "elevator",
+            "transition_id": "ELEV_2",
+            "out_of_service": true,
+            "is_accessible": true
+          }
+        ],
+        "edges": [
+          {
+            "source": "F3_HALL_1",
+            "target": "F3_HALL_2",
+            "weight": 20,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_2",
+            "target": "F3_HALL_3",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_3",
+            "target": "F3_HALL_4",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_4",
+            "target": "F3_HALL_5",
+            "weight": 20,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_1",
+            "target": "N301",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_2",
+            "target": "N302",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_4",
+            "target": "N303",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_5",
+            "target": "N304",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_2",
+            "target": "N305",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_4",
+            "target": "N306",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_5",
+            "target": "N307",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": false,
+            "note": "Step at doorway"
+          },
+          {
+            "source": "F3_HALL_1",
+            "target": "F3_STAIRS_A",
+            "weight": 17,
+            "type": "stairs",
+            "is_accessible": false
+          },
+          {
+            "source": "F3_HALL_5",
+            "target": "F3_STAIRS_B",
+            "weight": 12,
+            "type": "stairs",
+            "is_accessible": false
+          },
+          {
+            "source": "F3_HALL_3",
+            "target": "F3_ELEV_1",
+            "weight": 15,
+            "type": "corridor",
+            "is_accessible": true
+          },
+          {
+            "source": "F3_HALL_5",
+            "target": "F3_ELEV_2",
+            "weight": 13.5,
+            "type": "corridor",
+            "is_accessible": true
+          }
+        ]
+      }
+    }
+  ]
+}
