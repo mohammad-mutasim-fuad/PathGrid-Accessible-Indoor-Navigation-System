@@ -10,6 +10,12 @@ const LABEL_FONT = '600 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-
 const GLYPH_FONT = '700 11px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const LABELLED_TYPES = new Set(['room', 'restroom', 'entrance', 'elevator', 'stairs']);
 
+/** Extra canvas resolution so maps stay crisp when zoomed in, capped for memory. */
+export const getRenderScale = () => {
+  const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
+  return Math.min(dpr * 2, 3);
+};
+
 export const isOutOfServiceElevator = (node) =>
   node?.type === 'elevator' && node.out_of_service === true;
 

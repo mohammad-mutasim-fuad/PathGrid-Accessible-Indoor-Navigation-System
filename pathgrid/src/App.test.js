@@ -2,6 +2,8 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AppRoutes } from './App';
+// Warm the lazily loaded admin chunk so the /admin test doesn't race a cold module load.
+import './components/Admin/AdminRoutes';
 
 const renderAt = (path) => render(
   <MemoryRouter initialEntries={[path]}>
@@ -123,9 +125,9 @@ describe('Other routes', () => {
     expect(screen.getByRole('heading', { name: 'Wheelchair Mode' })).toBeInTheDocument();
   });
 
-  test('/admin/* renders the admin placeholder', () => {
+  test('/admin/login lazy-loads the admin sign-in page', async () => {
     renderAt('/admin/login');
-    expect(screen.getByRole('heading', { name: 'Admin Portal' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Administrator sign in/ })).toBeInTheDocument();
   });
 
   test('unknown paths render a not-found page', () => {
