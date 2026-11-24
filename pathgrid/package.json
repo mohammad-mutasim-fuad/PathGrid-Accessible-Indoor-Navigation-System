@@ -51,5 +51,10 @@
     "concurrently": "^10.0.7",
     "postcss": "^8.5.30",
     "tailwindcss": "^4.3.3"
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js"
+    }
   }
 }
