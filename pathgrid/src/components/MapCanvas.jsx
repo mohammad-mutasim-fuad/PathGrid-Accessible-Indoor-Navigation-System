@@ -1,32 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { TransformComponent, TransformWrapper } from 'react-zoom-pan-pinch';
 import { Maximize, Minus, Plus } from 'lucide-react';
-import { drawFloor, isOutOfServiceElevator } from './mapRenderer';
+import { drawFloor, getRenderScale, isOutOfServiceElevator } from './mapRenderer';
 import { getPathSegmentsForFloor } from '../services/routeUtils';
+import useFloorPlanImage from '../hooks/useFloorPlanImage';
 
-/** Extra resolution so the map stays crisp when zoomed in, capped for memory. */
-const getRenderScale = () => {
-  const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
-  return Math.min(dpr * 2, 3);
-};
-
-const useFloorPlanImage = (url) => {
-  const [image, setImage] = useState(null);
-  useEffect(() => {
-    setImage(null);
-    if (!url) return undefined;
-    let cancelled = false;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => { if (!cancelled) setImage(img); };
-    img.onerror = () => { if (!cancelled) setImage(null); };
-    img.src = url;
-    return () => { cancelled = true; };
-  }, [url]);
-  return image;
-};
-
-const ZoomButton = ({ label, onClick, children }) => (
+export const ZoomButton = ({ label, onClick, children }) => (
   <button
     type="button"
     onClick={onClick}

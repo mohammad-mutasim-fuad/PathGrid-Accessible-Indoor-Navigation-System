@@ -8,6 +8,9 @@
  *
  * Firestore uses a persistent IndexedDB cache with multi-tab support, so
  * previously loaded floor documents remain readable when the PWA is offline.
+ *
+ * Firebase Auth is initialised in authService.js, which is only imported by
+ * the lazily loaded admin portal, so public visitors never download it.
  */
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
@@ -17,8 +20,6 @@ import {
   persistentMultipleTabManager,
   memoryLocalCache,
 } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
-import { getStorage } from 'firebase/storage';
 
 const ENV_KEYS = {
   apiKey: 'REACT_APP_FIREBASE_API_KEY',
@@ -94,15 +95,10 @@ const createFirestore = (firebaseApp) => {
 
 let app = null;
 let db = null;
-let auth = null;
-let storage = null;
 
 if (isFirebaseConfigured) {
   app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
   db = createFirestore(app);
-  // getAuth persists admin sessions in IndexedDB (falls back to localStorage).
-  auth = getAuth(app);
-  storage = firebaseConfig.storageBucket ? getStorage(app) : null;
 } else if (process.env.NODE_ENV !== 'test') {
   // eslint-disable-next-line no-console
   console.warn(`[PathGrid] ${firebaseConfigError}`);
@@ -117,10 +113,4 @@ export const requireDb = () => {
   return db;
 };
 
-/** Returns the Auth instance or throws a descriptive error. */
-export const requireAuth = () => {
-  if (!auth) throw new Error(firebaseConfigError);
-  return auth;
-};
-
-export { app, db, auth, storage };
+export { app, db };
