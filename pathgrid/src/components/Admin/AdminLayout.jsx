@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import {
+  Link, NavLink, Outlet, useMatch, useNavigate,
+} from 'react-router-dom';
 import {
   ExternalLink, FlaskConical, LayoutDashboard, LogOut, Map as MapIcon, PenTool, Settings as SettingsIcon,
 } from 'lucide-react';
@@ -28,6 +30,7 @@ export default function AdminLayout() {
     buildings, buildingId, selectBuilding, building, status, error, retry,
   } = useAdminData();
   const navigate = useNavigate();
+  const isSettingsRoute = useMatch('/admin/settings') !== null;
   const [signingOut, setSigningOut] = useState(false);
 
   const handleLogout = async () => {
@@ -119,9 +122,32 @@ export default function AdminLayout() {
         <main className="flex min-w-0 flex-1 flex-col p-4 sm:p-6 lg:p-8">
           {status === 'loading' && <AdminLoading label="Loading building data…" />}
           {status === 'error' && <ErrorNotice message={`Could not load building data: ${error}`} onRetry={retry} />}
-          {status === 'empty' && (
-            <ErrorNotice message="No buildings found. Create a building document in Firestore to get started." />
+
+          {/* Empty database: Settings stays usable so the sample building can be loaded. */}
+          {status === 'empty' && isSettingsRoute && (
+            <>
+              <p role="note" className="mb-6 rounded-lg border-2 border-blue-700 bg-blue-50 px-4 py-3 text-sm text-blue-950">
+                <strong>No buildings yet.</strong>
+                {' '}
+                Use &ldquo;Load sample building&rdquo; below to create one, or add a building document in Firestore.
+              </p>
+              <Outlet />
+            </>
           )}
+          {status === 'empty' && !isSettingsRoute && (
+            <div className="space-y-3">
+              <ErrorNotice message="No buildings found. Create a building document in Firestore to get started." />
+              <p className="text-sm text-slate-700">
+                Or
+                {' '}
+                <Link to="/admin/settings" className="font-semibold text-blue-800 underline">
+                  load the sample building from Settings
+                </Link>
+                .
+              </p>
+            </div>
+          )}
+
           {status === 'ready' && <Outlet />}
         </main>
       </div>

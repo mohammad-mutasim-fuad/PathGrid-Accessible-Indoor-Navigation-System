@@ -42,9 +42,8 @@ function SampleDataCard({
   return (
     <Card title="Sample data" icon={DatabaseBackup}>
       <p className="text-sm text-slate-700">
-        {floorCount === 0
-          ? `"${buildingId ?? 'This building'}" has no floors yet. `
-          : ''}
+        {!buildingId && 'There are no buildings in the database yet. '}
+        {buildingId && floorCount === 0 && `"${buildingId}" has no floors yet. `}
         Load the bundled sample building <code className="rounded bg-slate-100 px-1">ENG_MAIN</code>: three floors with
         rooms, corridors, stairs, elevators (one out of service) and accessibility flags. You can then edit it in the Map
         Editor.
@@ -100,7 +99,10 @@ export default function Settings() {
     }
   };
 
+  // building is null and floors empty when the database has no buildings yet
+  // (status 'empty'); every field below must tolerate that.
   const weights = building?.transition_weights;
+  const floorCount = Array.isArray(floors) ? floors.length : 0;
 
   return (
     <div className="max-w-3xl">
@@ -130,11 +132,14 @@ export default function Settings() {
         </Card>
 
         <Card title="Building" icon={Building}>
+          {!building && (
+            <p className="mb-4 text-sm text-slate-600">No building yet. Load the sample building below to get started.</p>
+          )}
           <DetailList
             items={[
               ['Name', building?.building_name || '—'],
               ['Building ID', building?.building_id || '—'],
-              ['Floors', `${floors.length} loaded (total_floors: ${building?.total_floors ?? '—'})`],
+              ['Floors', `${floorCount} loaded (total_floors: ${building?.total_floors ?? '—'})`],
               ['Default floor', building?.default_floor ?? '—'],
               ['Last updated', formatTimestamp(building?.last_updated_timestamp)],
               ['Map update flag', building?.isMapUpdated ? 'Set (visitors will refresh)' : 'Not set'],
@@ -156,7 +161,7 @@ export default function Settings() {
 
         <SampleDataCard
           buildingId={building?.building_id}
-          floorCount={floors.length}
+          floorCount={floorCount}
           mode={mode}
           onSeed={seedSampleData}
         />

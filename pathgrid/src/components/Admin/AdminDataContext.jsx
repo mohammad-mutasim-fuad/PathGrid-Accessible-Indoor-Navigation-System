@@ -33,6 +33,9 @@ export function AdminDataProvider({ children }) {
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const mountedRef = useRef(true);
+  // When true, the next load skips the 'loading' state so the current page
+  // (e.g. Settings after seeding) stays mounted and keeps its messages.
+  const silentReloadRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -42,7 +45,11 @@ export function AdminDataProvider({ children }) {
   // One sequential load: building list -> pick a building -> its floors.
   useEffect(() => {
     let cancelled = false;
-    setStatus('loading');
+    if (silentReloadRef.current) {
+      silentReloadRef.current = false;
+    } else {
+      setStatus('loading');
+    }
     setError('');
 
     (async () => {
@@ -115,9 +122,13 @@ export function AdminDataProvider({ children }) {
     setReloadKey((key) => key + 1);
   }, []);
 
-  /** Writes the bundled sample building and its floors, then reloads. */
+  /**
+   * Writes the bundled sample building and its floors, then reloads quietly
+   * (no loading screen), so an 'empty' Settings page moves straight to 'ready'.
+   */
   const seedSampleData = useCallback(async () => {
     const result = await repository.seedSampleData();
+    silentReloadRef.current = true;
     setReloadKey((key) => key + 1);
     return result;
   }, [repository]);
