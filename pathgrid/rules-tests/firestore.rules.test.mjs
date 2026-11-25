@@ -227,3 +227,49 @@ describe('admin writes are schema-validated', () => {
     await assertSucceeds(setDoc(doc(listedAdminDb(), 'buildings/LIB'), { ...BUILDING, building_id: 'LIB' }));
   });
 });
+
+describe('minimal building documents (e.g. created by hand in the console)', () => {
+  const seedBatch = (db) => {
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'buildings/ENG_MAIN'), BUILDING);
+    batch.set(doc(db, 'floors/ENG_MAIN_FL01'), FLOOR);
+    return batch;
+  };
+
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await deleteDoc(doc(db, 'floors/ENG_MAIN_FL01'));
+      // The live document as reported: only a "name" field.
+      await setDoc(doc(db, 'buildings/ENG_MAIN'), { name: 'Engineering Main Building' });
+    });
+  });
+
+  test('it is still publicly readable', async () => {
+    await assertSucceeds(getDoc(doc(publicDb(), 'buildings/ENG_MAIN')));
+  });
+
+  test('admin writes are rejected while it lacks building_id / has "name"', async () => {
+    const db = listedAdminDb();
+    await assertFails(updateDoc(doc(db, 'buildings/ENG_MAIN'), { isMapUpdated: true }));
+    await assertFails(seedBatch(db).commit());
+  });
+
+  test('after adding building_id and removing "name", seeding and admin writes succeed', async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'buildings/ENG_MAIN'), {
+        building_id: 'ENG_MAIN', building_name: 'Engineering Main Building',
+      });
+    });
+    const db = listedAdminDb();
+    await assertSucceeds(seedBatch(db).commit());
+    await assertSucceeds(updateDoc(doc(db, 'buildings/ENG_MAIN'), { isMapUpdated: true }));
+  });
+
+  test('deleting the minimal document lets the seed create it fresh', async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await deleteDoc(doc(context.firestore(), 'buildings/ENG_MAIN'));
+    });
+    await assertSucceeds(seedBatch(listedAdminDb()).commit());
+  });
+});

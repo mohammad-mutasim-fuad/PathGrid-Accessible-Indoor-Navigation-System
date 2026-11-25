@@ -16,6 +16,8 @@ class FakeRequest {
     this.mode = init.mode ?? 'cors';
     this.destination = init.destination ?? '';
     this.cache = init.cache;
+    const headers = Object.fromEntries(Object.entries(init.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+    this.headers = { get: (name) => headers[name.toLowerCase()] ?? null };
   }
 }
 
@@ -26,6 +28,7 @@ class FakeResponse {
     this.ok = this.status >= 200 && this.status < 300;
     this.headers = init.headers ?? {};
     this.type = 'basic';
+    this.redirected = false;
   }
 
   clone() { return this; }
@@ -137,6 +140,12 @@ describe('classifyRequest', () => {
     ['Firebase Auth', 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword', { method: 'POST' }, 'bypass'],
     ['floor-plan images in Storage', 'https://firebasestorage.googleapis.com/v0/b/x/o/fl01.webp', { destination: 'image' }, 'map-asset'],
     ['other cross-origin requests', 'https://example.com/tracker.js', {}, 'bypass'],
+    // Regression: SPA routes requested without mode "navigate" must still get the
+    // HTML shell strategy, never the asset strategy (which returned Response.error()).
+    ['HTML requests that are not navigations', `${ORIGIN}/admin/settings`, { headers: { Accept: 'text/html,application/xhtml+xml' } }, 'navigation'],
+    ['document-destination requests', `${ORIGIN}/admin/settings`, { destination: 'document' }, 'navigation'],
+    ['Chrome prefetch of a page', `${ORIGIN}/admin/settings`, { headers: { 'Sec-Purpose': 'prefetch', Accept: 'text/html' } }, 'bypass'],
+    ['prerender requests', `${ORIGIN}/help`, { mode: 'navigate', headers: { 'Sec-Purpose': 'prefetch;prerender' } }, 'bypass'],
   ])('%s → %s', (_, url, init, expected) => {
     expect(classify(url, init)).toBe(expected);
   });
@@ -187,14 +196,46 @@ describe('install and activate', () => {
       `${ORIGIN}/`, `${ORIGIN}/index.html`, `${ORIGIN}/manifest.json`, `${ORIGIN}/logo512.png`,
       `${ORIGIN}/static/js/main.1.js`, `${ORIGIN}/static/js/9.chunk.js`,
     ]));
-    expect(fetchImpl.mock.calls[0][0]).toMatchObject({ url: `${ORIGIN}/asset-manifest.json`, cache: 'reload' });
+    const manifestCall = fetchImpl.mock.calls.find(([request]) => request.url.endsWith('/asset-manifest.json'));
+    expect(manifestCall[0]).toMatchObject({ cache: 'reload' });
+    expect(fetchImpl.mock.calls.every(([request]) => request.cache === 'reload')).toBe(true);
     expect(worker.self.skipWaiting).toHaveBeenCalled();
   });
 
   test('install still succeeds when no asset manifest is available', async () => {
-    const worker = loadWorker({ fetchImpl: jest.fn().mockRejectedValue(new TypeError('offline')) });
+    const fetchImpl = jest.fn(async (request) => {
+      if (request.url.endsWith('/asset-manifest.json')) throw new TypeError('offline');
+      return new FakeResponse(`body of ${request.url}`);
+    });
+    const worker = loadWorker({ fetchImpl });
     await dispatchLifecycle(worker.listeners.install);
     expect((await worker.caches.open('pathgrid-shell-abc123')).entries.has(`${ORIGIN}/index.html`)).toBe(true);
+    expect(worker.self.skipWaiting).toHaveBeenCalled();
+  });
+
+  test('a missing icon does not stop index.html being cached or the worker installing', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = jest.fn(async (request) => {
+      if (request.url.endsWith('/maskable-512.png')) return new FakeResponse('Not found', { status: 404 });
+      if (request.url.endsWith('/apple-touch-icon.png')) throw new TypeError('network');
+      if (request.url.endsWith('/asset-manifest.json')) {
+        return new FakeResponse(JSON.stringify({ files: { 'main.js': '/static/js/main.1.js' } }));
+      }
+      return new FakeResponse(`body of ${request.url}`);
+    });
+    const worker = loadWorker({ fetchImpl });
+
+    await dispatchLifecycle(worker.listeners.install);
+
+    const shell = await worker.caches.open('pathgrid-shell-abc123');
+    expect(shell.entries.has(`${ORIGIN}/index.html`)).toBe(true);
+    expect(shell.entries.has(`${ORIGIN}/static/js/main.1.js`)).toBe(true);
+    expect(shell.entries.has(`${ORIGIN}/maskable-512.png`)).toBe(false);
+    expect(worker.self.skipWaiting).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith('[PathGrid SW] Could not precache:', [
+      `${ORIGIN}/maskable-512.png`, `${ORIGIN}/apple-touch-icon.png`,
+    ]);
+    warn.mockRestore();
   });
 
   test('activate removes shell caches from older builds but keeps map assets', async () => {
@@ -236,6 +277,48 @@ describe('fetch strategies', () => {
     await (await worker.caches.open('pathgrid-shell-abc123')).put(`${ORIGIN}/index.html`, shell);
 
     expect(await dispatchFetch(worker.listeners.fetch, navigation('/admin/dashboard'))).toBe(shell);
+  });
+
+  test('regression: a non-navigate HTML request for /admin/settings offline gets the shell, not an error', async () => {
+    const worker = loadWorker({ fetchImpl: jest.fn().mockRejectedValue(new TypeError('Failed to fetch')) });
+    const shell = new FakeResponse('<html>shell</html>');
+    await (await worker.caches.open('pathgrid-shell-abc123')).put(`${ORIGIN}/index.html`, shell);
+
+    const response = await dispatchFetch(
+      worker.listeners.fetch,
+      new FakeRequest(`${ORIGIN}/admin/settings`, { headers: { Accept: 'text/html' } }),
+    );
+    expect(response).toBe(shell);
+    expect(response.type).not.toBe('error');
+  });
+
+  test('a server error on navigation falls back to the cached shell', async () => {
+    const worker = loadWorker({ fetchImpl: jest.fn().mockResolvedValue(new FakeResponse('oops', { status: 500 })) });
+    const shell = new FakeResponse('<html>shell</html>');
+    await (await worker.caches.open('pathgrid-shell-abc123')).put(`${ORIGIN}/index.html`, shell);
+
+    expect(await dispatchFetch(worker.listeners.fetch, navigation('/admin/settings'))).toBe(shell);
+  });
+
+  test('error pages and redirects are never stored as the shell', async () => {
+    const redirected = new FakeResponse('<html>login page</html>');
+    redirected.redirected = true;
+    const worker = loadWorker({ fetchImpl: jest.fn().mockResolvedValue(redirected) });
+
+    await dispatchFetch(worker.listeners.fetch, navigation('/'));
+    expect((await worker.caches.open('pathgrid-shell-abc123')).entries.has(`${ORIGIN}/index.html`)).toBe(false);
+  });
+
+  test('a cached shell that was redirected is re-wrapped so navigations accept it', async () => {
+    const worker = loadWorker({ fetchImpl: jest.fn().mockRejectedValue(new TypeError('offline')) });
+    const redirectedShell = new FakeResponse('<html>shell</html>', { status: 200 });
+    redirectedShell.redirected = true;
+    await (await worker.caches.open('pathgrid-shell-abc123')).put(`${ORIGIN}/index.html`, redirectedShell);
+
+    const response = await dispatchFetch(worker.listeners.fetch, navigation('/admin/editor'));
+    expect(response).not.toBe(redirectedShell);
+    expect(response.redirected).toBe(false);
+    expect(response.body).toBe('<html>shell</html>');
   });
 
   test('offline navigation with nothing cached shows an offline page', async () => {
@@ -291,9 +374,17 @@ describe('fetch strategies', () => {
     expect(maps.entries.has('https://firebasestorage.googleapis.com/v0/b/x/o/0.webp')).toBe(false);
   });
 
-  test('an uncached asset that fails offline yields a network error response', async () => {
+  test('an uncached asset that fails offline fails like a normal network error (no synthetic Response.error)', async () => {
     const worker = loadWorker({ fetchImpl: jest.fn().mockRejectedValue(new TypeError('offline')) });
-    const response = await dispatchFetch(worker.listeners.fetch, new FakeRequest(`${ORIGIN}/logo192.png`));
-    expect(response.type).toBe('error');
+    await expect(dispatchFetch(worker.listeners.fetch, new FakeRequest(`${ORIGIN}/logo192.png`)))
+      .rejects.toThrow('offline');
+  });
+
+  test('an uncached asset returns the real network response (including 404s)', async () => {
+    const notFound = new FakeResponse('missing', { status: 404 });
+    const worker = loadWorker({ fetchImpl: jest.fn().mockResolvedValue(notFound) });
+    const response = await dispatchFetch(worker.listeners.fetch, new FakeRequest(`${ORIGIN}/nope.png`));
+    expect(response).toBe(notFound);
+    expect((await worker.caches.open('pathgrid-shell-abc123')).entries.has(`${ORIGIN}/nope.png`)).toBe(false);
   });
 });

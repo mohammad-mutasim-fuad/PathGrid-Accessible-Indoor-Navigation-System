@@ -323,9 +323,11 @@ export const validateFloorForBuilding = (floors, floorNumber, topology) => {
   if (problems.length > 0) return problems;
 
   try {
-    buildBuildingGraph(floors.map((floor) => (floor.floor_number === floorNumber
-      ? { ...floor, graph_topology: topology }
-      : floor)));
+    const isNewFloor = !floors.some((floor) => floor.floor_number === floorNumber);
+    const merged = isNewFloor
+      ? [...floors, { floor_number: floorNumber, graph_topology: topology }]
+      : floors.map((floor) => (floor.floor_number === floorNumber ? { ...floor, graph_topology: topology } : floor));
+    buildBuildingGraph(merged);
   } catch (error) {
     problems.push(error.message);
   }

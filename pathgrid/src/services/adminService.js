@@ -11,7 +11,9 @@ import {
   getBuilding,
   getBuildingFloors,
   listBuildings,
+  normalizeBuilding,
   saveFloorTopology,
+  seedMockData,
   setEdgeOutOfService,
   setElevatorOutOfService,
 } from './dbService';
@@ -21,16 +23,61 @@ import mockMapData from '../data/mockMapData.json';
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 /* ------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Rejects with `message` if `promise` does not settle within `ms`. Keeps the
+ * admin UI from waiting forever on a stalled network request.
+ */
+export const withTimeout = (promise, ms, message = 'The request timed out.') => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error(`${message} Check your connection and try again.`)), ms);
+  Promise.resolve(promise).then(
+    (value) => { clearTimeout(timer); resolve(value); },
+    (error) => { clearTimeout(timer); reject(error); },
+  );
+});
+
+/** Ensures every building has building_id / building_name (from doc id / name). */
+export const normalizeBuildingList = (list) => (Array.isArray(list) ? list : [])
+  .filter(Boolean)
+  .map((building) => normalizeBuilding(building.building_id ?? building.id, building))
+  .filter((building) => typeof building.building_id === 'string' && building.building_id !== '');
+
+/**
+ * Picks the building to show: the requested one if it exists, otherwise the
+ * first. Returns null for an empty list.
+ */
+export const resolveBuildingId = (buildings, requestedId) => {
+  if (!Array.isArray(buildings) || buildings.length === 0) return null;
+  const ids = buildings.map((b) => b.building_id ?? b.id).filter(Boolean);
+  if (requestedId && ids.includes(requestedId)) return requestedId;
+  return ids[0] ?? null;
+};
+
+/** User-facing explanation for Firestore errors raised by admin writes. */
+export const describeFirestoreError = (error) => {
+  if (error?.code === 'permission-denied') {
+    return 'Firestore rejected this change (permission denied). Make sure your account has an admins/{uid} '
+      + 'document and that the building document has a building_id field matching its document ID '
+      + 'and only the supported fields (no "name" field). See the setup notes.';
+  }
+  if (error?.code === 'unavailable') return 'Firestore is unreachable. Check your connection and try again.';
+  return error?.message || 'Something went wrong.';
+};
+
+/* ------------------------------------------------------------------------- */
 /* Repositories                                                               */
 /* ------------------------------------------------------------------------- */
 
 export const liveAdminRepository = Object.freeze({
   mode: 'live',
-  listBuildings: () => listBuildings(),
+  listBuildings: async () => normalizeBuildingList(await listBuildings()),
   loadBuilding: async (buildingId) => {
     const [building, floors] = await Promise.all([getBuilding(buildingId), getBuildingFloors(buildingId)]);
     if (!building) throw new Error(`Building "${buildingId}" was not found.`);
-    return { building, floors };
+    // A building without floor documents is valid: it simply has no floors yet.
+    return { building: normalizeBuilding(buildingId, building), floors: Array.isArray(floors) ? floors : [] };
   },
   setElevatorOutOfService: (buildingId, elevatorKey, outOfService) =>
     setElevatorOutOfService(buildingId, elevatorKey, outOfService),
@@ -38,6 +85,8 @@ export const liveAdminRepository = Object.freeze({
     setEdgeOutOfService(buildingId, floorNumber, sourceId, targetId, outOfService),
   saveFloorTopology: (buildingId, floorNumber, topology) =>
     saveFloorTopology(buildingId, floorNumber, topology),
+  /** Writes the bundled sample building (ENG_MAIN, 3 floors) to Firestore. */
+  seedSampleData: () => seedMockData(),
 });
 
 /**
@@ -114,6 +163,13 @@ export const createDemoAdminRepository = (seed = mockMapData) => {
         }];
       replaceFloors(buildingId, nextFloors);
       touch(building);
+    },
+    /** Restores the bundled sample building (mirrors the live seed). */
+    seedSampleData: async () => {
+      const fresh = clone(mockMapData);
+      store.buildings = fresh.buildings;
+      store.floors = fresh.floors;
+      return { buildings: fresh.buildings.length, floors: fresh.floors.length };
     },
   };
 };

@@ -1,17 +1,87 @@
 import * as dbService from './dbService';
 import {
   createDemoAdminRepository,
+  describeFirestoreError,
   formatTimestamp,
   getDemoAdminRepository,
   listElevators,
   listFloorEdges,
   liveAdminRepository,
+  normalizeBuildingList,
   resetDemoAdminRepository,
+  resolveBuildingId,
   summarizeBuilding,
+  withTimeout,
 } from './adminService';
 import mockMapData from '../data/mockMapData.json';
 
-jest.mock('./dbService');
+jest.mock('./dbService', () => {
+  const actual = jest.requireActual('./dbService');
+  const mocked = jest.createMockFromModule('./dbService');
+  // Keep the pure normalizer real; mock everything that touches Firestore.
+  return { ...mocked, normalizeBuilding: actual.normalizeBuilding };
+});
+
+describe('minimal / partial Firestore documents', () => {
+  test('normalizeBuildingList falls back to the doc id and "name"', () => {
+    expect(normalizeBuildingList([{ id: 'ENG_MAIN', name: 'Engineering Main Building' }])).toEqual([
+      {
+        id: 'ENG_MAIN', name: 'Engineering Main Building', building_id: 'ENG_MAIN', building_name: 'Engineering Main Building',
+      },
+    ]);
+    expect(normalizeBuildingList(null)).toEqual([]);
+    expect(normalizeBuildingList([null, {}])).toEqual([]);
+  });
+
+  test('resolveBuildingId picks the requested building or the first one', () => {
+    const list = [{ building_id: 'A' }, { id: 'B' }];
+    expect(resolveBuildingId(list, 'B')).toBe('B');
+    expect(resolveBuildingId(list, 'MISSING')).toBe('A');
+    expect(resolveBuildingId([], 'A')).toBeNull();
+  });
+
+  test('live loadBuilding resolves for a building with no floors yet', async () => {
+    dbService.getBuilding.mockResolvedValue({ id: 'ENG_MAIN', name: 'Engineering Main Building' });
+    dbService.getBuildingFloors.mockResolvedValue([]);
+    await expect(liveAdminRepository.loadBuilding('ENG_MAIN')).resolves.toEqual({
+      building: expect.objectContaining({ building_id: 'ENG_MAIN', building_name: 'Engineering Main Building' }),
+      floors: [],
+    });
+  });
+
+  test('live listBuildings normalizes raw documents', async () => {
+    dbService.listBuildings.mockResolvedValue([{ id: 'ENG_MAIN', name: 'Engineering Main Building' }]);
+    const [building] = await liveAdminRepository.listBuildings();
+    expect(building).toMatchObject({ building_id: 'ENG_MAIN', building_name: 'Engineering Main Building' });
+  });
+
+  test('withTimeout rejects stalled promises and passes through settled ones', async () => {
+    jest.useFakeTimers();
+    const stalled = withTimeout(new Promise(() => {}), 1000, 'Loading timed out.');
+    jest.advanceTimersByTime(1000);
+    await expect(stalled).rejects.toThrow('Loading timed out.');
+    jest.useRealTimers();
+    await expect(withTimeout(Promise.resolve(7), 1000)).resolves.toBe(7);
+  });
+
+  test('describeFirestoreError explains permission problems', () => {
+    expect(describeFirestoreError({ code: 'permission-denied' })).toMatch(/admins\/\{uid\}.*building_id/);
+    expect(describeFirestoreError(new Error('boom'))).toBe('boom');
+  });
+
+  test('live seedSampleData calls dbService.seedMockData', async () => {
+    dbService.seedMockData.mockResolvedValue({ buildings: 1, floors: 3 });
+    await expect(liveAdminRepository.seedSampleData()).resolves.toEqual({ buildings: 1, floors: 3 });
+  });
+
+  test('demo seedSampleData restores the sample building', async () => {
+    const repo = createDemoAdminRepository();
+    await repo.saveFloorTopology('ENG_MAIN', 1, { nodes: [], edges: [] });
+    await repo.seedSampleData();
+    const { floors } = await repo.loadBuilding('ENG_MAIN');
+    expect(floors[0].graph_topology.nodes.length).toBe(18);
+  });
+});
 
 describe('liveAdminRepository delegates to dbService', () => {
   beforeEach(() => jest.clearAllMocks());
@@ -37,7 +107,7 @@ describe('liveAdminRepository delegates to dbService', () => {
     dbService.getBuilding.mockResolvedValue({ building_id: 'B' });
     dbService.getBuildingFloors.mockResolvedValue([{ floor_number: 1 }]);
     await expect(liveAdminRepository.loadBuilding('B')).resolves.toEqual({
-      building: { building_id: 'B' }, floors: [{ floor_number: 1 }],
+      building: { id: 'B', building_id: 'B', building_name: 'B' }, floors: [{ floor_number: 1 }],
     });
 
     dbService.getBuilding.mockResolvedValue(null);
