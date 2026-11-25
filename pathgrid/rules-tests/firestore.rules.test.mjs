@@ -326,3 +326,44 @@ describe('Map Editor "Add Floor" (dbService.addFloor transaction)', () => {
     await assertSucceeds(addFloorTransaction(listedAdminDb(), 1, { total_floors: 2 }));
   });
 });
+
+describe('Map Editor cross-floor link save (saveFloorTopology with linkedNodeUpdates)', () => {
+  const STAIRS = {
+    id: 'F2_STAIRS', name: 'Staircase', x: 10, y: 10, type: 'stairs', is_accessible: false,
+  };
+
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'floors/ENG_MAIN_FL02'), {
+        ...FLOOR, floor_number: 2, graph_topology: { nodes: [STAIRS], edges: [] },
+      });
+    });
+  });
+
+  /** The exact writes of the linked save: current floor + linked floor + building. */
+  const linkedSave = (db) => runTransaction(db, async (tx) => {
+    await tx.get(doc(db, 'floors/ENG_MAIN_FL02'));
+    tx.set(doc(db, 'floors/ENG_MAIN_FL01'), {
+      building_id: 'ENG_MAIN',
+      floor_number: 1,
+      graph_topology: {
+        nodes: [{ ...STAIRS, id: 'F1_STAIRS', transition_id: 'STAIRS_1' }],
+        edges: [],
+      },
+    }, { merge: true });
+    tx.update(doc(db, 'floors/ENG_MAIN_FL02'), {
+      graph_topology: { nodes: [{ ...STAIRS, transition_id: 'STAIRS_1' }], edges: [] },
+    });
+    tx.update(doc(db, 'buildings/ENG_MAIN'), {
+      isMapUpdated: true, last_updated_timestamp: '2026-11-25T08:00:00.000Z',
+    });
+  });
+
+  test('an admin can save a floor and the linked floor in one transaction', async () => {
+    await assertSucceeds(linkedSave(listedAdminDb()));
+  });
+
+  test('non-admins cannot', async () => {
+    await assertFails(linkedSave(userDb()));
+  });
+});

@@ -3,7 +3,9 @@
  * No React, no Firebase: every function returns new objects and never
  * mutates its input.
  */
-import { buildBuildingGraph, validateTopology } from './graphBuilder';
+import {
+  buildBuildingGraph, isVerticalNode, transitionGroupKey, validateTopology,
+} from './graphBuilder';
 
 export const NODE_TYPES = Object.freeze(['room', 'corridor', 'entrance', 'restroom', 'elevator', 'stairs']);
 export const EDGE_TYPES = Object.freeze(['corridor', 'ramp', 'stairs', 'elevator']);
@@ -287,6 +289,84 @@ export const applyEdgeOutOfService = (topology, a, b, outOfService) => {
 };
 
 /* ------------------------------------------------------------------------- */
+/* Cross-floor (vertical) links                                               */
+/* ------------------------------------------------------------------------- */
+
+const nodeLabel = (node) => node?.name ?? node?.id;
+
+/**
+ * Applies queued node changes on other floors ([{ floorNumber, nodeId,
+ * changes }]) to floor documents. Returns new documents; unaffected floors
+ * keep their identity.
+ */
+export const applyLinkedNodeUpdates = (floors, updates) => {
+  if (!updates || updates.length === 0) return floors;
+  return floors.map((floor) => {
+    const forFloor = updates.filter((u) => u.floorNumber === floor.floor_number);
+    if (forFloor.length === 0) return floor;
+    const topology = floor.graph_topology ?? { nodes: [], edges: [] };
+    const nodes = topology.nodes.map((node) => {
+      const update = forFloor.find((u) => u.nodeId === node.id);
+      return update ? { ...node, ...update.changes } : node;
+    });
+    return { ...floor, graph_topology: { ...topology, nodes } };
+  });
+};
+
+/** Another node (not `exceptId`) in `nodes` already using `transitionId`. */
+const findTransitionClash = (nodes, transitionId, exceptId) =>
+  nodes.find((n) => n.id !== exceptId && n.transition_id === transitionId) ?? null;
+
+/**
+ * Works out how to link `node` (on `floorNumber`, being edited as `topology`)
+ * to `target` ({ floor, node }) on another floor, so both share one
+ * transition_id and the link can never be one-sided:
+ *
+ *  - target has a transition_id → `node` adopts it (current floor only;
+ *    the target's own links to other floors are preserved).
+ *  - target has none → the target adopts `node`'s id (or a new one), which
+ *    is returned as `linkedUpdate` to be saved atomically with this floor.
+ *
+ * @returns {{ nodeChanges: object|null, linkedUpdate: object|null, error: string|null }}
+ */
+export const planVerticalLink = ({
+  floors, floorNumber, topology, node, target, takenTransitionIds,
+}) => {
+  const fail = (error) => ({ nodeChanges: null, linkedUpdate: null, error });
+  if (!isVerticalNode(node)) return fail('Only stairs and elevators can be linked across floors.');
+  if (!target?.node || target.floor === floorNumber) return fail('Choose a node on another floor.');
+  if (target.node.type !== node.type) {
+    return fail(`A ${node.type === 'stairs' ? 'staircase' : 'elevator'} can only link to another ${node.type === 'stairs' ? 'staircase' : 'elevator'}.`);
+  }
+
+  if (target.node.transition_id) {
+    const shared = target.node.transition_id;
+    const clash = findTransitionClash(topology.nodes, shared, node.id);
+    if (clash) return fail(`"${nodeLabel(clash)}" on this floor is already part of that ${node.type === 'stairs' ? 'staircase' : 'elevator'}.`);
+    return {
+      nodeChanges: node.transition_id === shared ? null : { transition_id: shared },
+      linkedUpdate: null,
+      error: null,
+    };
+  }
+
+  const shared = node.transition_id || nextTransitionId(node.type, takenTransitionIds);
+  const targetFloorNodes = floors.find((f) => f.floor_number === target.floor)?.graph_topology?.nodes ?? [];
+  const clash = findTransitionClash(targetFloorNodes, shared, target.node.id);
+  if (clash) return fail(`Floor ${target.floor} already has "${nodeLabel(clash)}" in this ${node.type === 'stairs' ? 'staircase' : 'elevator'}.`);
+  return {
+    nodeChanges: node.transition_id ? null : { transition_id: shared },
+    linkedUpdate: { floorNumber: target.floor, nodeId: target.node.id, changes: { transition_id: shared } },
+    error: null,
+  };
+};
+
+/** Detaches `node` from its shaft by giving it a fresh, unused transition_id. */
+export const planVerticalUnlink = ({ node, takenTransitionIds }) => ({
+  transition_id: nextTransitionId(node.type, takenTransitionIds),
+});
+
+/* ------------------------------------------------------------------------- */
 /* Validation                                                                 */
 /* ------------------------------------------------------------------------- */
 
@@ -313,11 +393,26 @@ export const validateFloorForBuilding = (floors, floorNumber, topology) => {
   });
 
   const otherIds = new Set();
+  const otherVertical = new Map(); // transition_id -> { type, floor, name }
   floors
     .filter((floor) => floor.floor_number !== floorNumber)
-    .forEach((floor) => (floor.graph_topology?.nodes ?? []).forEach((node) => otherIds.add(node.id)));
+    .forEach((floor) => (floor.graph_topology?.nodes ?? []).forEach((node) => {
+      otherIds.add(node.id);
+      if (isVerticalNode(node) && node.transition_id && !otherVertical.has(node.transition_id)) {
+        otherVertical.set(node.transition_id, { type: node.type, floor: floor.floor_number, name: nodeLabel(node) });
+      }
+    }));
   topology.nodes.forEach((node) => {
     if (otherIds.has(node.id)) problems.push(`Node id "${node.id}" is already used on another floor.`);
+    // An elevator and a staircase must not share a transition_id: they would
+    // look linked in the editor but never connect in routing.
+    const other = isVerticalNode(node) && node.transition_id ? otherVertical.get(node.transition_id) : null;
+    if (other && transitionGroupKey(node) !== `${other.type}:${node.transition_id}`) {
+      problems.push(
+        `Transition id "${node.transition_id}" on ${node.type} "${nodeLabel(node)}" is used by `
+        + `${other.type} "${other.name}" on floor ${other.floor}. Elevators and stairs cannot share an id.`,
+      );
+    }
   });
 
   if (problems.length > 0) return problems;

@@ -319,3 +319,110 @@ test('regression: switching floors never shows the previous floor\'s graph, even
   expect(screen.getByText('Nodes on floor 2 (17)')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Save floor 2' })).toBeDisabled();
 });
+
+describe('admin map editor: cross-floor links', () => {
+  const nodeList = () => screen.getByRole('list', { name: 'Nodes' });
+  const linkedFloors = () => within(screen.getByRole('list', { name: 'Linked floors' }))
+    .getAllByRole('listitem').map((item) => item.textContent);
+  const floorNode = async (floorNumber, id) => (await getDemoAdminRepository().loadBuilding('ENG_MAIN'))
+    .floors.find((f) => f.floor_number === floorNumber).graph_topology.nodes.find((n) => n.id === id);
+
+  test('shows which floors a staircase is linked to', async () => {
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    userEvent.click(within(nodeList()).getByText('Staircase A (West)'));
+
+    expect(screen.getByRole('heading', { name: 'Cross-floor link' })).toBeInTheDocument();
+    expect(linkedFloors()).toEqual(['Floor 2: Staircase A (West)', 'Floor 3: Staircase A (West)']);
+  });
+
+  test('unlink and relink a staircase, saving each time', async () => {
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    userEvent.click(within(nodeList()).getByText('Staircase A (West)'));
+
+    userEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    expect(screen.getByText('Not linked to any other floor.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Transition ID')).toHaveValue('STAIRS_1');
+    userEvent.click(screen.getByRole('button', { name: 'Save floor 1' }));
+    await screen.findByText('Floor 1 saved (demo session only).');
+    expect((await floorNode(1, 'F1_STAIRS_A')).transition_id).toBe('STAIRS_1');
+    expect((await floorNode(2, 'F2_STAIRS_A')).transition_id).toBe('STAIRS_A');
+    expect((await floorNode(3, 'F3_STAIRS_A')).transition_id).toBe('STAIRS_A');
+
+    userEvent.click(within(nodeList()).getByText('Staircase A (West)'));
+    userEvent.selectOptions(screen.getByLabelText('Link to staircase on another floor'), '2:F2_STAIRS_A');
+    userEvent.click(screen.getByRole('button', { name: 'Link' }));
+    expect(linkedFloors()).toEqual(['Floor 2: Staircase A (West)', 'Floor 3: Staircase A (West)']);
+    userEvent.click(screen.getByRole('button', { name: 'Save floor 1' }));
+    await screen.findByText('Floor 1 saved (demo session only).');
+    expect((await floorNode(1, 'F1_STAIRS_A')).transition_id).toBe('STAIRS_A');
+  });
+
+  test('elevators only offer elevators, and block links that would clash on this floor', async () => {
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    userEvent.click(within(nodeList()).getByText('Elevator 1 (Central)'));
+
+    const select = screen.getByLabelText('Link to elevator on another floor');
+    const options = within(select).getAllByRole('option').slice(1);
+    expect(options.map((o) => o.textContent)).toEqual([
+      'Elevator 1 (Central) (linked)', 'Elevator 2 (East) (unavailable)',
+      'Elevator 1 (Central) (linked)', 'Elevator 2 (East) (unavailable)',
+    ]);
+    options.forEach((option) => expect(option).toBeDisabled());
+    expect(options[1]).toHaveAttribute('title', expect.stringMatching(/"Elevator 2 \(East\)" on this floor is already part of that elevator/));
+  });
+
+  test('linking to a node without an id updates that floor atomically on save', async () => {
+    // Simulate legacy data: floor 2's east staircase has no transition_id.
+    const repo = getDemoAdminRepository();
+    const floor2 = (await repo.loadBuilding('ENG_MAIN')).floors[1].graph_topology;
+    await repo.saveFloorTopology('ENG_MAIN', 2, {
+      ...floor2,
+      nodes: floor2.nodes.map(({ transition_id: id, ...rest }) => (rest.id === 'F2_STAIRS_B' ? rest : { ...rest, transition_id: id })),
+    });
+
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    userEvent.click(within(nodeList()).getByText('Staircase B (East)'));
+    expect(linkedFloors()).toEqual(['Floor 3: Staircase B (East)']);
+
+    userEvent.selectOptions(screen.getByLabelText('Link to staircase on another floor'), '2:F2_STAIRS_B');
+    userEvent.click(screen.getByRole('button', { name: 'Link' }));
+    expect(linkedFloors()).toEqual(['Floor 2: Staircase B (East) (saved with this floor)', 'Floor 3: Staircase B (East)']);
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    expect((await floorNode(2, 'F2_STAIRS_B')).transition_id).toBeUndefined();
+
+    userEvent.click(screen.getByRole('button', { name: 'Save floor 1' }));
+    expect(await screen.findByText('Floor 1 saved (demo session only). Linked floor 2 updated.')).toBeInTheDocument();
+    expect((await floorNode(2, 'F2_STAIRS_B')).transition_id).toBe('STAIRS_B');
+  });
+
+  test('Discard drops queued cross-floor changes', async () => {
+    const repo = getDemoAdminRepository();
+    const floor2 = (await repo.loadBuilding('ENG_MAIN')).floors[1].graph_topology;
+    await repo.saveFloorTopology('ENG_MAIN', 2, {
+      ...floor2,
+      nodes: floor2.nodes.map(({ transition_id: id, ...rest }) => (rest.id === 'F2_STAIRS_B' ? rest : { ...rest, transition_id: id })),
+    });
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    userEvent.click(within(nodeList()).getByText('Staircase B (East)'));
+    userEvent.selectOptions(screen.getByLabelText('Link to staircase on another floor'), '2:F2_STAIRS_B');
+    userEvent.click(screen.getByRole('button', { name: 'Link' }));
+
+    userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+
+    expect(screen.getByText('No unsaved changes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save floor 1' })).toBeDisabled();
+    expect((await floorNode(2, 'F2_STAIRS_B')).transition_id).toBeUndefined();
+  });
+
+  test('unlinking the only working elevator on floor 1 removes the wheelchair route upstairs', async () => {
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    userEvent.click(within(nodeList()).getByText('Elevator 1 (Central)'));
+    userEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    userEvent.click(screen.getByRole('button', { name: 'Save floor 1' }));
+    await screen.findByText('Floor 1 saved (demo session only).');
+
+    const graph = buildBuildingGraph((await getDemoAdminRepository().loadBuilding('ENG_MAIN')).floors);
+    expect(findShortestPath(graph, 'N100', 'N304', true).found).toBe(false);
+    expect(findShortestPath(graph, 'N100', 'N304', false).found).toBe(true);
+  });
+});

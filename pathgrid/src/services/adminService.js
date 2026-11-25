@@ -18,7 +18,7 @@ import {
   setEdgeOutOfService,
   setElevatorOutOfService,
 } from './dbService';
-import { applyEdgeOutOfService, applyElevatorOutOfService } from './topologyEditor';
+import { applyEdgeOutOfService, applyElevatorOutOfService, applyLinkedNodeUpdates } from './topologyEditor';
 import { getNextFloorNumber } from './graphBuilder';
 import mockMapData from '../data/mockMapData.json';
 
@@ -85,8 +85,9 @@ export const liveAdminRepository = Object.freeze({
     setElevatorOutOfService(buildingId, elevatorKey, outOfService),
   setEdgeOutOfService: (buildingId, floorNumber, sourceId, targetId, outOfService) =>
     setEdgeOutOfService(buildingId, floorNumber, sourceId, targetId, outOfService),
-  saveFloorTopology: (buildingId, floorNumber, topology) =>
-    saveFloorTopology(buildingId, floorNumber, topology),
+  /** `options.linkedNodeUpdates` patches nodes on other floors atomically (cross-floor links). */
+  saveFloorTopology: (buildingId, floorNumber, topology, options = {}) =>
+    saveFloorTopology(buildingId, floorNumber, topology, options),
   /** Writes the bundled sample building (ENG_MAIN, 3 floors) to Firestore. */
   seedSampleData: () => seedMockData(),
   /** Creates the next floor (empty graph) and updates total_floors. Resolves to its number. */
@@ -154,18 +155,26 @@ export const createDemoAdminRepository = (seed = mockMapData) => {
       replaceFloors(buildingId, floors);
       touch(building);
     },
-    saveFloorTopology: async (buildingId, floorNumber, topology) => {
+    saveFloorTopology: async (buildingId, floorNumber, topology, { linkedNodeUpdates = [] } = {}) => {
       const building = findBuilding(buildingId);
       const floors = buildingFloors(buildingId);
+      const updates = linkedNodeUpdates.filter((u) => u.floorNumber !== floorNumber);
+      // Same all-or-nothing contract as the live transaction.
+      updates.forEach((update) => {
+        const target = floors.find((f) => f.floor_number === update.floorNumber);
+        if (!target?.graph_topology?.nodes?.some((node) => node.id === update.nodeId)) {
+          throw new Error(`Linked node "${update.nodeId}" on floor ${update.floorNumber} no longer exists. Reload and try again.`);
+        }
+      });
       const exists = floors.some((floor) => floor.floor_number === floorNumber);
-      const nextFloors = exists
+      const withCurrent = exists
         ? floors.map((floor) => (floor.floor_number === floorNumber
           ? { ...floor, graph_topology: clone(topology) }
           : floor))
         : [...floors, {
           building_id: buildingId, floor_number: floorNumber, floor_plan_image_url: '', graph_topology: clone(topology),
         }];
-      replaceFloors(buildingId, nextFloors);
+      replaceFloors(buildingId, applyLinkedNodeUpdates(withCurrent, clone(updates)));
       touch(building);
     },
     /** Mirrors dbService.addFloor in memory. */
