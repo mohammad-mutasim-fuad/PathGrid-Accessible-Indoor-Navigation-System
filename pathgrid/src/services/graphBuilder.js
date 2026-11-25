@@ -13,6 +13,30 @@ export const DEFAULT_TRANSITION_WEIGHTS = Object.freeze({
   stairs: 15,
 });
 
+/** Node types that connect floors. */
+export const VERTICAL_NODE_TYPES = Object.freeze(['stairs', 'elevator']);
+
+export const isVerticalNode = (node) => VERTICAL_NODE_TYPES.includes(node?.type);
+
+/** Nodes link across floors only when both type and transition_id match. */
+export const transitionGroupKey = (node) => `${node.type}:${node.transition_id}`;
+
+/**
+ * Same-type vertical nodes on OTHER floors that share `node`'s transition_id,
+ * i.e. what `node` is linked to. Returns [{ floor, node }] sorted by floor.
+ */
+export const findLinkedNodes = (floors, floorNumber, node) => {
+  if (!isVerticalNode(node) || !node.transition_id) return [];
+  const key = transitionGroupKey(node);
+  return (floors ?? [])
+    .filter((floor) => floor.floor_number !== floorNumber)
+    .flatMap((floor) => (floor.graph_topology?.nodes ?? [])
+      .filter((candidate) => isVerticalNode(candidate) && candidate.transition_id
+        && transitionGroupKey(candidate) === key)
+      .map((candidate) => ({ floor: floor.floor_number, node: candidate })))
+    .sort((a, b) => a.floor - b.floor);
+};
+
 /** Highest floor number firestore.rules accepts (floor_number / total_floors <= 200). */
 export const MAX_FLOOR_NUMBER = 200;
 
@@ -90,7 +114,10 @@ export const validateTopology = (topology) => {
  *
  * - Every node gets a `floor` field taken from its document's floor_number.
  * - Node ids must be unique across the whole building.
- * - Consecutive floors are linked through nodes sharing a `transition_id`.
+ * - Consecutive floors are linked through vertical nodes of the SAME type
+ *   (stairs↔stairs, elevator↔elevator) sharing a `transition_id`. An elevator
+ *   and a staircase never link to each other, and other node types never
+ *   link, even if they carry a stray transition_id.
  *   Vertical stairs edges are inaccessible; elevator edges inherit the
  *   accessibility of their endpoints. Out-of-service elevators stay on the
  *   node, where aStarEngine treats them as impassable.
@@ -123,23 +150,24 @@ export const buildBuildingGraph = (floorDocs, transitionWeights = {}) => {
       const node = { ...rawNode, floor: floorDoc.floor_number };
       nodes.push(node);
 
-      if (node.transition_id) {
-        if (!transitions.has(node.transition_id)) transitions.set(node.transition_id, []);
-        transitions.get(node.transition_id).push(node);
+      if (isVerticalNode(node) && node.transition_id) {
+        const key = transitionGroupKey(node);
+        if (!transitions.has(key)) transitions.set(key, []);
+        transitions.get(key).push(node);
       }
     });
 
     topology.edges.forEach((edge) => edges.push({ ...edge }));
   });
 
-  transitions.forEach((group, transitionId) => {
+  transitions.forEach((group) => {
     for (let i = 0; i < group.length - 1; i += 1) {
       const lower = group[i];
       const upper = group[i + 1];
       if (lower.floor === upper.floor) {
-        throw new Error(`transition_id "${transitionId}" is used twice on floor ${lower.floor}.`);
+        throw new Error(`transition_id "${lower.transition_id}" is used twice on floor ${lower.floor}.`);
       }
-      const type = lower.type === 'stairs' || upper.type === 'stairs' ? 'stairs' : lower.type;
+      const { type } = lower; // same type for the whole group
       const perFloor = weights[type] ?? weights.stairs;
       edges.push({
         source: lower.id,
@@ -148,7 +176,7 @@ export const buildBuildingGraph = (floorDocs, transitionWeights = {}) => {
         type,
         is_accessible:
           type !== 'stairs' && lower.is_accessible !== false && upper.is_accessible !== false,
-        transition_id: transitionId,
+        transition_id: lower.transition_id,
       });
     }
   });

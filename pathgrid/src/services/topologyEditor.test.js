@@ -1,6 +1,9 @@
 import {
   applyEdgeOutOfService,
   applyElevatorOutOfService,
+  applyLinkedNodeUpdates,
+  planVerticalLink,
+  planVerticalUnlink,
   computeEdgeWeight,
   createNode,
   editorReducer,
@@ -210,5 +213,78 @@ describe('validateFloorForBuilding', () => {
 
   test('passes through single-floor validation errors', () => {
     expect(validateFloorForBuilding(floors, 1, { nodes: [{ id: 'X' }], edges: [] })[0]).toMatch(/numeric/);
+  });
+});
+
+describe('cross-floor link planning', () => {
+  const stairs = (id, transitionId) => ({
+    id, name: id, x: 0, y: 0, type: 'stairs', is_accessible: false, transition_id: transitionId,
+  });
+  const elevator = (id, transitionId) => ({
+    id, name: id, x: 0, y: 0, type: 'elevator', is_accessible: true, transition_id: transitionId,
+  });
+  const floorDoc = (number, nodes) => ({ floor_number: number, graph_topology: { nodes, edges: [] } });
+
+  const floors = [
+    floorDoc(1, [stairs('S1', 'STAIRS_1'), elevator('E1', 'ELEV_1')]),
+    floorDoc(2, [stairs('S2', 'STAIRS_2'), stairs('S2b', undefined), elevator('E2', 'ELEV_2')]),
+  ];
+  const taken = new Set(['STAIRS_1', 'STAIRS_2', 'ELEV_1', 'ELEV_2']);
+  const [S1, E1] = floors[0].graph_topology.nodes;
+  const [S2, S2b, E2] = floors[1].graph_topology.nodes;
+  const plan = (node, floorNumber, target, topology = floors[0].graph_topology) => planVerticalLink({
+    floors, floorNumber: 1, topology, node, target: { floor: floorNumber, node: target }, takenTransitionIds: taken,
+  });
+
+  test('linking to a node that has an id adopts that id (current floor only)', () => {
+    expect(plan(S1, 2, S2)).toEqual({ nodeChanges: { transition_id: 'STAIRS_2' }, linkedUpdate: null, error: null });
+  });
+
+  test('linking to a node without an id queues an update for the other floor', () => {
+    expect(plan(S1, 2, S2b)).toEqual({
+      nodeChanges: null,
+      linkedUpdate: { floorNumber: 2, nodeId: 'S2b', changes: { transition_id: 'STAIRS_1' } },
+      error: null,
+    });
+  });
+
+  test('a node without an id gets a fresh one shared with the target', () => {
+    expect(plan(stairs('S1x', undefined), 2, S2b)).toEqual({
+      nodeChanges: { transition_id: 'STAIRS_3' },
+      linkedUpdate: { floorNumber: 2, nodeId: 'S2b', changes: { transition_id: 'STAIRS_3' } },
+      error: null,
+    });
+  });
+
+  test('stairs cannot link to elevators, to the same floor, or from other node types', () => {
+    expect(plan(S1, 2, E2).error).toMatch(/staircase can only link to another staircase/);
+    expect(plan(E1, 2, S2).error).toMatch(/elevator can only link to another elevator/);
+    expect(plan(S1, 1, S1).error).toMatch(/another floor/);
+    expect(plan({ id: 'R', type: 'room' }, 2, S2).error).toMatch(/Only stairs and elevators/);
+  });
+
+  test('refuses to put two nodes of one floor into the same shaft', () => {
+    const topology = { nodes: [stairs('S1', 'STAIRS_1'), stairs('S1b', 'STAIRS_2')], edges: [] };
+    expect(plan(topology.nodes[0], 2, S2, topology).error)
+      .toMatch(/"S1b" on this floor is already part of that staircase/);
+  });
+
+  test('unlinking assigns a fresh, unused id', () => {
+    expect(planVerticalUnlink({ node: E1, takenTransitionIds: taken })).toEqual({ transition_id: 'ELEV_3' });
+  });
+
+  test('applyLinkedNodeUpdates patches only the targeted nodes', () => {
+    const result = applyLinkedNodeUpdates(floors, [{ floorNumber: 2, nodeId: 'S2b', changes: { transition_id: 'STAIRS_1' } }]);
+    expect(result[0]).toBe(floors[0]);
+    expect(result[1].graph_topology.nodes[1].transition_id).toBe('STAIRS_1');
+    expect(S2b.transition_id).toBeUndefined();
+    expect(applyLinkedNodeUpdates(floors, [])).toBe(floors);
+  });
+
+  test('validation rejects an elevator and a staircase sharing an id across floors', () => {
+    const others = [floorDoc(2, [stairs('S2', 'SHAFT')])];
+    const topology = { nodes: [elevator('E1', 'SHAFT')], edges: [] };
+    expect(validateFloorForBuilding(others, 1, topology).join('\n'))
+      .toMatch(/Elevators and stairs cannot share an id/);
   });
 });

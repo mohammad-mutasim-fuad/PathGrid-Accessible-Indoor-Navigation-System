@@ -101,7 +101,7 @@ describe('liveAdminRepository delegates to dbService', () => {
   test('saveFloorTopology', async () => {
     const topology = { nodes: [], edges: [] };
     await liveAdminRepository.saveFloorTopology('ENG_MAIN', 1, topology);
-    expect(dbService.saveFloorTopology).toHaveBeenCalledWith('ENG_MAIN', 1, topology);
+    expect(dbService.saveFloorTopology).toHaveBeenCalledWith('ENG_MAIN', 1, topology, {});
   });
 
   test('loadBuilding reads building and floors without mock fallback', async () => {
@@ -249,5 +249,34 @@ describe('addFloor', () => {
     const { floors } = await repo.loadBuilding('ENG_MAIN');
 
     expect(() => buildBuildingGraph(floors)).not.toThrow();
+  });
+});
+
+describe('saveFloorTopology with cross-floor link updates', () => {
+  test('live repository passes linkedNodeUpdates through to dbService', async () => {
+    const topology = { nodes: [], edges: [] };
+    const linkedNodeUpdates = [{ floorNumber: 2, nodeId: 'X', changes: { transition_id: 'T' } }];
+    await liveAdminRepository.saveFloorTopology('ENG_MAIN', 1, topology, { linkedNodeUpdates });
+    expect(dbService.saveFloorTopology).toHaveBeenLastCalledWith('ENG_MAIN', 1, topology, { linkedNodeUpdates });
+  });
+
+  test('demo: patches the linked floor together with the saved floor', async () => {
+    const repo = createDemoAdminRepository();
+    const { floors } = await repo.loadBuilding('ENG_MAIN');
+    await repo.saveFloorTopology('ENG_MAIN', 1, floors[0].graph_topology, {
+      linkedNodeUpdates: [{ floorNumber: 2, nodeId: 'F2_STAIRS_B', changes: { transition_id: 'STAIRS_Z' } }],
+    });
+    const after = await repo.loadBuilding('ENG_MAIN');
+    expect(after.floors[1].graph_topology.nodes.find((n) => n.id === 'F2_STAIRS_B').transition_id).toBe('STAIRS_Z');
+    expect(after.floors[2]).toEqual(floors[2]);
+  });
+
+  test('demo: all-or-nothing, a missing linked node saves nothing', async () => {
+    const repo = createDemoAdminRepository();
+    const before = await repo.loadBuilding('ENG_MAIN');
+    await expect(repo.saveFloorTopology('ENG_MAIN', 1, { nodes: [], edges: [] }, {
+      linkedNodeUpdates: [{ floorNumber: 2, nodeId: 'GHOST', changes: { transition_id: 'X' } }],
+    })).rejects.toThrow(/no longer exists/);
+    expect((await repo.loadBuilding('ENG_MAIN')).floors).toEqual(before.floors);
   });
 });

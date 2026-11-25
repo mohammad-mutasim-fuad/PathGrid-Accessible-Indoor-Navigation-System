@@ -112,8 +112,9 @@ export function AdminDataProvider({ children }) {
     await refresh();
   }, [repository, buildingId, refresh]);
 
-  const saveFloorTopology = useCallback(async (floorNumber, topology) => {
-    await repository.saveFloorTopology(buildingId, floorNumber, topology);
+  /** `options.linkedNodeUpdates` saves cross-floor link changes atomically with this floor. */
+  const saveFloorTopology = useCallback(async (floorNumber, topology, options = {}) => {
+    await repository.saveFloorTopology(buildingId, floorNumber, topology, options);
     await refresh();
   }, [repository, buildingId, refresh]);
 

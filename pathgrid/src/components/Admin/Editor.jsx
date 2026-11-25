@@ -3,6 +3,7 @@ import {
 } from 'react';
 import {
   CirclePlus, Info, Link2, LoaderCircle, MousePointer2, Move, Plus, Redo2, RotateCcw, Save, Search, Spline, Trash, Undo2,
+  Unlink,
 } from 'lucide-react';
 import { useAdminData } from './AdminDataContext';
 import EditorCanvas from './EditorCanvas';
@@ -13,6 +14,7 @@ import {
   EDGE_TYPES,
   NODE_TYPES,
   TRANSITION_TYPES,
+  applyLinkedNodeUpdates,
   computeEdgeWeight,
   connects,
   createNode,
@@ -21,9 +23,12 @@ import {
   isTopologyChanged,
   nextNodeId,
   nextTransitionId,
+  planVerticalLink,
+  planVerticalUnlink,
   typeChangeDefaults,
   validateFloorForBuilding,
 } from '../../services/topologyEditor';
+import { findLinkedNodes } from '../../services/graphBuilder';
 import { getCanvasSize } from '../../services/routeUtils';
 import { describeFirestoreError } from '../../services/adminService';
 
@@ -120,8 +125,100 @@ function Checkbox({
   );
 }
 
+/**
+ * Shows which nodes on other floors a staircase/elevator is linked to, and
+ * lets the admin link it to a same-type node on another floor or unlink it.
+ */
+function VerticalLinkPanel({
+  node, linked, options, onLink, onUnlink,
+}) {
+  const [choice, setChoice] = useState('');
+  useEffect(() => setChoice(''), [node.id, node.transition_id]);
+  const kind = node.type === 'stairs' ? 'staircase' : 'elevator';
+  const optionFloors = [...new Set(options.map((o) => o.floor))];
+
+  return (
+    <section aria-labelledby="vertical-link-heading" className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <h3 id="vertical-link-heading" className="text-sm font-semibold text-slate-800">Cross-floor link</h3>
+      {linked.length === 0 ? (
+        <p className="mt-1 text-sm text-slate-600">Not linked to any other floor.</p>
+      ) : (
+        <>
+          <p className="mt-1 text-sm text-slate-600">Linked to:</p>
+          <ul aria-label="Linked floors" className="mt-1 space-y-0.5 text-sm text-slate-900">
+            {linked.map(({ floor, node: other, pending }) => (
+              <li key={`${floor}:${other.id}`}>
+                {`Floor ${floor}: ${other.name ?? other.id}`}
+                {pending && <span className="text-amber-700"> (saved with this floor)</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {options.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-600">{`No ${kind}s on other floors yet.`}</p>
+      ) : (
+        <div className="mt-3">
+          <label htmlFor="vertical-link-target" className="mb-1 block text-sm font-medium text-slate-700">
+            {`Link to ${kind} on another floor`}
+          </label>
+          <select
+            id="vertical-link-target"
+            value={choice}
+            onChange={(event) => setChoice(event.target.value)}
+            className={INPUT}
+          >
+            <option value="">{`Choose a ${kind}…`}</option>
+            {optionFloors.map((floor) => (
+              <optgroup key={floor} label={`Floor ${floor}`}>
+                {options.filter((o) => o.floor === floor).map((o) => (
+                  <option
+                    key={o.node.id}
+                    value={`${o.floor}:${o.node.id}`}
+                    disabled={o.isLinked || Boolean(o.disabledReason)}
+                    title={o.disabledReason ?? undefined}
+                  >
+                    {`${o.node.name ?? o.node.id}${o.isLinked ? ' (linked)' : ''}${o.disabledReason ? ' (unavailable)' : ''}`}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          disabled={!choice}
+          onClick={() => {
+            const separator = choice.indexOf(':');
+            onLink(Number(choice.slice(0, separator)), choice.slice(separator + 1));
+            setChoice('');
+          }}
+          className={`${BUTTON.secondary} h-10`}
+        >
+          <Link2 aria-hidden="true" className="h-4 w-4" />
+          Link
+        </button>
+        <button
+          type="button"
+          disabled={linked.length === 0}
+          onClick={onUnlink}
+          className={`${BUTTON.secondary} h-10`}
+        >
+          <Unlink aria-hidden="true" className="h-4 w-4" />
+          Unlink
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function NodePanel({
   node, topology, transitionSuggestions, onUpdate, onTypeChange, onDelete, onConnect, onSelectEdge, onDeleteEdge,
+  verticalLinkPanel = null,
 }) {
   const [connectTarget, setConnectTarget] = useState('');
   useEffect(() => setConnectTarget(''), [node.id]);
@@ -169,6 +266,7 @@ function NodePanel({
           <datalist id="transition-suggestions">
             {transitionSuggestions.map((id) => <option key={id} value={id} />)}
           </datalist>
+          {verticalLinkPanel}
         </>
       )}
       {node.type === 'elevator' && (
@@ -338,8 +436,12 @@ export default function Editor() {
   const [validationErrors, setValidationErrors] = useState([]);
   const [saveState, setSaveState] = useState({ status: 'idle', message: '' });
 
+  // Node changes on OTHER floors needed by cross-floor links made in this
+  // session ([{ floorNumber, nodeId, changes }]); saved atomically with the floor.
+  const [pendingLinks, setPendingLinks] = useState([]);
+
   const { topology } = editor;
-  const dirty = isTopologyChanged(topology, savedTopology);
+  const dirty = isTopologyChanged(topology, savedTopology) || pendingLinks.length > 0;
   const unitsPerMeter = building?.units_per_meter ?? DEFAULT_UNITS_PER_METER;
 
   // Load the floor (on floor switch and after a save refreshes the data).
@@ -348,6 +450,7 @@ export default function Editor() {
     setSelection(null);
     setConnectSourceId(null);
     setValidationErrors([]);
+    setPendingLinks([]);
   }, [savedTopology]);
 
   // Warn before closing the tab with unsaved work.
@@ -361,9 +464,11 @@ export default function Editor() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [dirty]);
 
+  // Saved floors as they will look once pending cross-floor link changes are saved.
+  const linkedFloors = useMemo(() => applyLinkedNodeUpdates(floors, pendingLinks), [floors, pendingLinks]);
   const otherFloorNodes = useMemo(
-    () => floors.filter((f) => f.floor_number !== floorNumber).flatMap((f) => f.graph_topology?.nodes ?? []),
-    [floors, floorNumber],
+    () => linkedFloors.filter((f) => f.floor_number !== floorNumber).flatMap((f) => f.graph_topology?.nodes ?? []),
+    [linkedFloors, floorNumber],
   );
   const takenIds = useMemo(
     () => new Set([...otherFloorNodes, ...topology.nodes].map((n) => n.id)),
@@ -390,6 +495,34 @@ export default function Editor() {
       .filter((n) => n.type === selectedNode.type && n.transition_id)
       .map((n) => n.transition_id))].sort();
   }, [otherFloorNodes, selectedNode]);
+
+  // Cross-floor link status and candidates for the selected staircase/elevator.
+  const verticalLink = useMemo(() => {
+    if (!selectedNode || !TRANSITION_TYPES.includes(selectedNode.type)) return null;
+    const linked = findLinkedNodes(linkedFloors, floorNumber, selectedNode).map((entry) => ({
+      ...entry,
+      pending: pendingLinks.some((p) => p.floorNumber === entry.floor && p.nodeId === entry.node.id),
+    }));
+    const options = linkedFloors
+      .filter((f) => f.floor_number !== floorNumber)
+      .sort((a, b) => a.floor_number - b.floor_number)
+      .flatMap((f) => (f.graph_topology?.nodes ?? [])
+        .filter((n) => n.type === selectedNode.type)
+        .map((n) => {
+          const target = { floor: f.floor_number, node: n };
+          const isLinked = Boolean(selectedNode.transition_id) && n.transition_id === selectedNode.transition_id;
+          const plan = isLinked ? null : planVerticalLink({
+            floors: linkedFloors,
+            floorNumber,
+            topology,
+            node: selectedNode,
+            target,
+            takenTransitionIds: transitionIds,
+          });
+          return { ...target, isLinked, disabledReason: plan?.error ?? null };
+        }));
+    return { linked, options };
+  }, [selectedNode, linkedFloors, floorNumber, pendingLinks, topology, transitionIds]);
 
   /* ----------------------------- actions ------------------------------ */
 
@@ -422,6 +555,43 @@ export default function Editor() {
     const transitionId = nextTransitionId(type, transitionIds);
     updateNode(node.id, typeChangeDefaults(node, type, { transitionId }));
   }, [transitionIds, updateNode]);
+
+  /** Links a staircase/elevator on this floor to a same-type node on another floor. */
+  const linkVertical = useCallback((node, targetFloor, targetNodeId) => {
+    const targetNode = linkedFloors
+      .find((f) => f.floor_number === targetFloor)?.graph_topology?.nodes
+      ?.find((n) => n.id === targetNodeId);
+    const plan = planVerticalLink({
+      floors: linkedFloors,
+      floorNumber,
+      topology,
+      node,
+      target: { floor: targetFloor, node: targetNode },
+      takenTransitionIds: transitionIds,
+    });
+    if (plan.error) {
+      setSaveState({ status: 'error', message: plan.error });
+      return;
+    }
+    if (plan.nodeChanges) updateNode(node.id, plan.nodeChanges);
+    if (plan.linkedUpdate) {
+      const { linkedUpdate } = plan;
+      setPendingLinks((current) => [
+        ...current.filter((p) => !(p.floorNumber === linkedUpdate.floorNumber && p.nodeId === linkedUpdate.nodeId)),
+        linkedUpdate,
+      ]);
+    }
+    clearTransient();
+  }, [linkedFloors, floorNumber, topology, transitionIds, updateNode, clearTransient]);
+
+  /** Detaches a staircase/elevator from its shaft (other floors stay linked to each other). */
+  const unlinkVertical = useCallback((node) => {
+    const oldId = node.transition_id;
+    updateNode(node.id, planVerticalUnlink({ node, takenTransitionIds: transitionIds }));
+    // Drop queued changes that only existed to join other floors to this node.
+    setPendingLinks((current) => current.filter((p) => p.changes.transition_id !== oldId));
+    clearTransient();
+  }, [transitionIds, updateNode, clearTransient]);
 
   const connectNodes = useCallback((source, target) => {
     dispatch({
@@ -506,6 +676,7 @@ export default function Editor() {
     dispatch({ type: 'reset', topology: topology ?? EMPTY_TOPOLOGY });
     setSelection(null);
     setConnectSourceId(null);
+    setPendingLinks([]);
   }, []);
 
   const changeFloor = (next) => {
@@ -543,22 +714,30 @@ export default function Editor() {
     dispatch({ type: 'reset', topology: savedTopology });
     setSelection(null);
     setConnectSourceId(null);
+    setPendingLinks([]);
     clearTransient();
   };
 
   const save = async () => {
-    const errors = validateFloorForBuilding(floors, floorNumber, topology);
+    // Validate against the other floors as they will be after linked changes.
+    const errors = validateFloorForBuilding(linkedFloors, floorNumber, topology);
     setValidationErrors(errors);
     if (errors.length > 0) {
       setSaveState({ status: 'error', message: 'Fix the problems below before saving.' });
       return;
     }
+    const linkedFloorNumbers = [...new Set(pendingLinks.map((p) => p.floorNumber))];
     setSaveState({ status: 'saving', message: 'Saving…' });
     try {
-      await saveFloorTopology(floorNumber, topology);
+      await saveFloorTopology(floorNumber, topology, { linkedNodeUpdates: pendingLinks });
+      const linkedNote = linkedFloorNumbers.length > 0
+        ? ` Linked floor${linkedFloorNumbers.length > 1 ? 's' : ''} ${linkedFloorNumbers.join(', ')} updated.`
+        : '';
       setSaveState({
         status: 'saved',
-        message: mode === 'demo' ? `Floor ${floorNumber} saved (demo session only).` : `Floor ${floorNumber} saved.`,
+        message: mode === 'demo'
+          ? `Floor ${floorNumber} saved (demo session only).${linkedNote}`
+          : `Floor ${floorNumber} saved.${linkedNote}`,
       });
     } catch (error) {
       setSaveState({ status: 'error', message: error.message });
@@ -805,6 +984,15 @@ export default function Editor() {
                 onConnect={(targetId) => connectNodes(selectedNode.id, targetId)}
                 onSelectEdge={(edge) => setSelection({ kind: 'edge', source: edge.source, target: edge.target })}
                 onDeleteEdge={deleteEdge}
+                verticalLinkPanel={verticalLink && (
+                  <VerticalLinkPanel
+                    node={selectedNode}
+                    linked={verticalLink.linked}
+                    options={verticalLink.options}
+                    onLink={(floor, nodeId) => linkVertical(selectedNode, floor, nodeId)}
+                    onUnlink={() => unlinkVertical(selectedNode)}
+                  />
+                )}
               />
             )}
             {selectedEdge && (

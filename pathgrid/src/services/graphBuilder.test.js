@@ -5,6 +5,7 @@ import {
   DEFAULT_TRANSITION_WEIGHTS,
   MAX_FLOOR_NUMBER,
   getNextFloorNumber,
+  findLinkedNodes,
 } from './graphBuilder';
 
 const floor = (floorNumber, nodes, edges = []) => ({
@@ -140,5 +141,59 @@ describe('getNextFloorNumber', () => {
   test('refuses to exceed the limit enforced by firestore.rules', () => {
     expect(getNextFloorNumber([MAX_FLOOR_NUMBER - 1])).toBe(MAX_FLOOR_NUMBER);
     expect(() => getNextFloorNumber([MAX_FLOOR_NUMBER])).toThrow(RangeError);
+  });
+});
+
+describe('cross-floor links only join same-type vertical nodes', () => {
+  const vnode = (id, type, transitionId) => ({
+    id, x: 0, y: 0, type, transition_id: transitionId, is_accessible: type !== 'stairs',
+  });
+
+  test('regression: an elevator and a staircase sharing a transition_id are NOT linked', () => {
+    const graph = buildBuildingGraph([
+      floor(1, [vnode('E1', 'elevator', 'SHAFT')]),
+      floor(2, [vnode('S2', 'stairs', 'SHAFT')]),
+    ]);
+    expect(graph.edges).toEqual([]);
+  });
+
+  test('regression: non-vertical nodes with a stray transition_id are ignored', () => {
+    const graph = buildBuildingGraph([
+      floor(1, [vnode('R1', 'room', 'X')]),
+      floor(2, [vnode('R2', 'room', 'X')]),
+    ]);
+    expect(graph.edges).toEqual([]);
+  });
+
+  test('same id and type link; a different-type namesake in between is skipped', () => {
+    const graph = buildBuildingGraph([
+      floor(1, [vnode('E1', 'elevator', 'A')]),
+      floor(2, [vnode('S2', 'stairs', 'A')]),
+      floor(3, [vnode('E3', 'elevator', 'A')]),
+    ]);
+    expect(graph.edges).toEqual([
+      expect.objectContaining({
+        source: 'E1', target: 'E3', type: 'elevator', is_accessible: true, weight: 20,
+      }),
+    ]);
+  });
+});
+
+describe('findLinkedNodes', () => {
+  const floors = [
+    floor(1, [{ id: 'S1', type: 'stairs', transition_id: 'ST' }, { id: 'E1', type: 'elevator', transition_id: 'ST' }]),
+    floor(2, [{ id: 'S2', type: 'stairs', transition_id: 'ST' }]),
+    floor(3, [{ id: 'S3', type: 'stairs', transition_id: 'ST' }, { id: 'S3b', type: 'stairs', transition_id: 'OTHER' }]),
+  ];
+
+  test('lists same-type nodes with the same id on other floors, by floor', () => {
+    expect(findLinkedNodes(floors, 1, floors[0].graph_topology.nodes[0]).map((e) => [e.floor, e.node.id]))
+      .toEqual([[2, 'S2'], [3, 'S3']]);
+  });
+
+  test('ignores other types and nodes without an id', () => {
+    expect(findLinkedNodes(floors, 1, floors[0].graph_topology.nodes[1])).toEqual([]);
+    expect(findLinkedNodes(floors, 1, { id: 'X', type: 'stairs' })).toEqual([]);
+    expect(findLinkedNodes(floors, 1, { id: 'R', type: 'room', transition_id: 'ST' })).toEqual([]);
   });
 });

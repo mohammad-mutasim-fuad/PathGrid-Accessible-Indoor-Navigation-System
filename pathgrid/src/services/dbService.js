@@ -280,25 +280,70 @@ export const saveBuildingMetadata = async (buildingId, metadata) => {
 /**
  * Replaces a floor's packed graph_topology after validation and flags the
  * building as updated, atomically.
+ *
+ * `linkedNodeUpdates` ([{ floorNumber, nodeId, changes }]) patches nodes on
+ * OTHER floors in the same transaction, e.g. giving a staircase on floor 2
+ * the transition_id that links it to this floor. Either everything is written
+ * or nothing is, so a cross-floor link is never left one-sided.
  */
-export const saveFloorTopology = async (buildingId, floorNumber, graphTopology) => {
+export const saveFloorTopology = async (
+  buildingId,
+  floorNumber,
+  graphTopology,
+  { linkedNodeUpdates = [] } = {},
+) => {
   assertBuildingId(buildingId);
   const { valid, errors } = validateTopology(graphTopology);
   if (!valid) throw new Error(`Invalid graph_topology:\n- ${errors.join('\n- ')}`);
 
   const firestore = requireDb();
-  const batch = writeBatch(firestore);
-  batch.set(
-    floorRef(firestore, buildingId, floorNumber),
-    {
-      building_id: buildingId,
-      floor_number: floorNumber,
-      graph_topology: { nodes: graphTopology.nodes, edges: graphTopology.edges },
-    },
-    { merge: true },
-  );
-  batch.update(buildingRef(firestore, buildingId), mapUpdatedFields());
-  await batch.commit();
+  const currentFloor = {
+    building_id: buildingId,
+    floor_number: floorNumber,
+    graph_topology: { nodes: graphTopology.nodes, edges: graphTopology.edges },
+  };
+  const updates = linkedNodeUpdates.filter((update) => update.floorNumber !== floorNumber);
+
+  if (updates.length === 0) {
+    const batch = writeBatch(firestore);
+    batch.set(floorRef(firestore, buildingId, floorNumber), currentFloor, { merge: true });
+    batch.update(buildingRef(firestore, buildingId), mapUpdatedFields());
+    await batch.commit();
+    return;
+  }
+
+  const linkedFloorNumbers = [...new Set(updates.map((update) => update.floorNumber))];
+  await runTransaction(firestore, async (transaction) => {
+    // All reads first (Firestore transaction rule).
+    const refs = linkedFloorNumbers.map((n) => floorRef(firestore, buildingId, n));
+    const snaps = await Promise.all(refs.map((ref) => transaction.get(ref)));
+
+    const patched = snaps.map((snap, index) => {
+      const number = linkedFloorNumbers[index];
+      if (!snap.exists()) throw new Error(`Floor ${number} no longer exists. Reload and try again.`);
+      const topology = normalizeFloor(snap.id, snap.data()).graph_topology;
+      const forFloor = updates.filter((update) => update.floorNumber === number);
+      const nodes = topology.nodes.map((node) => {
+        const update = forFloor.find((u) => u.nodeId === node.id);
+        return update ? { ...node, ...update.changes } : node;
+      });
+      forFloor.forEach((update) => {
+        if (!topology.nodes.some((node) => node.id === update.nodeId)) {
+          throw new Error(`Linked node "${update.nodeId}" on floor ${number} no longer exists. Reload and try again.`);
+        }
+      });
+      const next = { nodes, edges: topology.edges };
+      const check = validateTopology(next);
+      if (!check.valid) throw new Error(`Floor ${number} would become invalid:\n- ${check.errors.join('\n- ')}`);
+      return next;
+    });
+
+    transaction.set(floorRef(firestore, buildingId, floorNumber), currentFloor, { merge: true });
+    patched.forEach((topology, index) => {
+      transaction.update(refs[index], { graph_topology: topology });
+    });
+    transaction.update(buildingRef(firestore, buildingId), mapUpdatedFields());
+  });
 };
 
 /**
