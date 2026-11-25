@@ -21,7 +21,9 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured, requireDb } from './firebase';
-import { buildBuildingGraph, floorDocId, validateTopology } from './graphBuilder';
+import {
+  buildBuildingGraph, floorDocId, getNextFloorNumber, validateTopology,
+} from './graphBuilder';
 import mockMapData from '../data/mockMapData.json';
 
 export const BUILDINGS_COLLECTION = 'buildings';
@@ -316,6 +318,61 @@ export const saveFloorPlanImageUrl = async (buildingId, floorNumber, imageUrl) =
   );
   batch.update(buildingRef(firestore, buildingId), mapUpdatedFields());
   await batch.commit();
+};
+
+/**
+ * Creates the next floor (highest existing floor_number + 1) with an empty
+ * graph, and updates the building in the same transaction:
+ *   total_floors  -> at least the new floor number
+ *   default_floor -> 1 if the building has none
+ *   isMapUpdated / last_updated_timestamp -> refreshed
+ *
+ * Only fields allowed by firestore.rules are written. The transaction re-checks
+ * that the target floor document does not exist yet, so two admins clicking
+ * at once cannot overwrite each other's floor.
+ *
+ * @returns {Promise<number>} the new floor number
+ */
+export const addFloor = async (buildingId) => {
+  assertBuildingId(buildingId);
+  const firestore = requireDb();
+
+  // Transactions cannot run queries, so discover existing floors first.
+  const existing = await getDocs(
+    query(collection(firestore, FLOORS_COLLECTION), where('building_id', '==', buildingId)),
+  );
+  const floorNumbers = existing.docs
+    .map((floorDoc) => normalizeFloor(floorDoc.id, floorDoc.data()).floor_number)
+    .filter((n) => n !== null);
+  const nextFloor = getNextFloorNumber(floorNumbers);
+
+  return runTransaction(firestore, async (transaction) => {
+    const bRef = buildingRef(firestore, buildingId);
+    const fRef = floorRef(firestore, buildingId, nextFloor);
+    const [buildingSnap, floorSnap] = await Promise.all([transaction.get(bRef), transaction.get(fRef)]);
+
+    if (!buildingSnap.exists()) throw new Error(`Building "${buildingId}" was not found.`);
+    if (floorSnap.exists()) {
+      throw new Error(`Floor ${nextFloor} already exists (another admin may have just added it). Refresh and try again.`);
+    }
+
+    const building = buildingSnap.data();
+    const currentTotal = Number.isInteger(building.total_floors) ? building.total_floors : 0;
+    const buildingChanges = {
+      total_floors: Math.max(currentTotal, nextFloor),
+      ...mapUpdatedFields(),
+    };
+    if (!Number.isInteger(building.default_floor)) buildingChanges.default_floor = 1;
+
+    transaction.set(fRef, {
+      building_id: buildingId,
+      floor_number: nextFloor,
+      floor_plan_image_url: '',
+      graph_topology: { nodes: [], edges: [] },
+    });
+    transaction.update(bRef, buildingChanges);
+    return nextFloor;
+  });
 };
 
 /**

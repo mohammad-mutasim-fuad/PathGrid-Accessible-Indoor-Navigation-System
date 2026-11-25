@@ -8,6 +8,7 @@
  *          Demo changes live in this browser tab and are never persisted.
  */
 import {
+  addFloor,
   getBuilding,
   getBuildingFloors,
   listBuildings,
@@ -18,6 +19,7 @@ import {
   setElevatorOutOfService,
 } from './dbService';
 import { applyEdgeOutOfService, applyElevatorOutOfService } from './topologyEditor';
+import { getNextFloorNumber } from './graphBuilder';
 import mockMapData from '../data/mockMapData.json';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -87,6 +89,8 @@ export const liveAdminRepository = Object.freeze({
     saveFloorTopology(buildingId, floorNumber, topology),
   /** Writes the bundled sample building (ENG_MAIN, 3 floors) to Firestore. */
   seedSampleData: () => seedMockData(),
+  /** Creates the next floor (empty graph) and updates total_floors. Resolves to its number. */
+  addFloor: (buildingId) => addFloor(buildingId),
 });
 
 /**
@@ -163,6 +167,23 @@ export const createDemoAdminRepository = (seed = mockMapData) => {
         }];
       replaceFloors(buildingId, nextFloors);
       touch(building);
+    },
+    /** Mirrors dbService.addFloor in memory. */
+    addFloor: async (buildingId) => {
+      const building = findBuilding(buildingId);
+      const floors = buildingFloors(buildingId);
+      const nextFloor = getNextFloorNumber(floors.map((floor) => floor.floor_number));
+      replaceFloors(buildingId, [...floors, {
+        building_id: buildingId,
+        floor_number: nextFloor,
+        floor_plan_image_url: '',
+        graph_topology: { nodes: [], edges: [] },
+      }]);
+      const currentTotal = Number.isInteger(building.total_floors) ? building.total_floors : 0;
+      building.total_floors = Math.max(currentTotal, nextFloor);
+      if (!Number.isInteger(building.default_floor)) building.default_floor = 1;
+      touch(building);
+      return nextFloor;
     },
     /** Restores the bundled sample building (mirrors the live seed). */
     seedSampleData: async () => {

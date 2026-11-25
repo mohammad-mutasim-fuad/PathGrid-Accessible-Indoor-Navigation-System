@@ -14,6 +14,7 @@ import {
   withTimeout,
 } from './adminService';
 import mockMapData from '../data/mockMapData.json';
+import { buildBuildingGraph } from './graphBuilder';
 
 jest.mock('./dbService', () => {
   const actual = jest.requireActual('./dbService');
@@ -200,5 +201,53 @@ describe('dashboard read models', () => {
     expect(formatTimestamp(null)).toBe('Never');
     expect(formatTimestamp('garbage', '—')).toBe('—');
     expect(formatTimestamp('2026-08-01T10:30:00Z')).toMatch(/2026/);
+  });
+});
+
+describe('addFloor', () => {
+  test('live addFloor delegates to dbService.addFloor', async () => {
+    dbService.addFloor.mockResolvedValue(4);
+    await expect(liveAdminRepository.addFloor('ENG_MAIN')).resolves.toBe(4);
+    expect(dbService.addFloor).toHaveBeenCalledWith('ENG_MAIN');
+  });
+
+  test('demo addFloor creates the next empty floor and leaves existing floors intact', async () => {
+    const repo = createDemoAdminRepository();
+    const before = await repo.loadBuilding('ENG_MAIN');
+
+    await expect(repo.addFloor('ENG_MAIN')).resolves.toBe(4);
+
+    const { building, floors } = await repo.loadBuilding('ENG_MAIN');
+    expect(floors.map((f) => f.floor_number)).toEqual([1, 2, 3, 4]);
+    expect(floors[3]).toEqual({
+      building_id: 'ENG_MAIN', floor_number: 4, floor_plan_image_url: '', graph_topology: { nodes: [], edges: [] },
+    });
+    expect(floors.slice(0, 3)).toEqual(before.floors);
+    expect(building).toMatchObject({ total_floors: 4, default_floor: 1, isMapUpdated: true });
+  });
+
+  test('demo addFloor on a building without floors creates floor 1 and sets default_floor', async () => {
+    const repo = createDemoAdminRepository({ buildings: [{ building_id: 'LIB' }], floors: [] });
+    await expect(repo.addFloor('LIB')).resolves.toBe(1);
+    const { building, floors } = await repo.loadBuilding('LIB');
+    expect(floors.map((f) => f.floor_number)).toEqual([1]);
+    expect(building).toMatchObject({ total_floors: 1, default_floor: 1 });
+  });
+
+  test('demo addFloor keeps a larger total_floors and an existing default_floor', async () => {
+    const repo = createDemoAdminRepository({
+      buildings: [{ building_id: 'LIB', total_floors: 10, default_floor: 2 }],
+      floors: [{ building_id: 'LIB', floor_number: 2, graph_topology: { nodes: [], edges: [] } }],
+    });
+    await expect(repo.addFloor('LIB')).resolves.toBe(3);
+    expect((await repo.loadBuilding('LIB')).building).toMatchObject({ total_floors: 10, default_floor: 2 });
+  });
+
+  test('the added floor still builds into a routable building graph', async () => {
+    const repo = createDemoAdminRepository();
+    await repo.addFloor('ENG_MAIN');
+    const { floors } = await repo.loadBuilding('ENG_MAIN');
+
+    expect(() => buildBuildingGraph(floors)).not.toThrow();
   });
 });

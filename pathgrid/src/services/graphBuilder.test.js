@@ -3,6 +3,8 @@ import {
   floorDocId,
   validateTopology,
   DEFAULT_TRANSITION_WEIGHTS,
+  MAX_FLOOR_NUMBER,
+  getNextFloorNumber,
 } from './graphBuilder';
 
 const floor = (floorNumber, nodes, edges = []) => ({
@@ -118,5 +120,25 @@ describe('buildBuildingGraph', () => {
     const snapshot = JSON.stringify(docs);
     buildBuildingGraph(docs);
     expect(JSON.stringify(docs)).toBe(snapshot);
+  });
+});
+
+describe('getNextFloorNumber', () => {
+  test('is one above the highest existing floor', () => {
+    expect(getNextFloorNumber([1, 2, 3])).toBe(4);
+    expect(getNextFloorNumber([3, 1])).toBe(4);
+    expect(getNextFloorNumber([0])).toBe(1);
+    expect(getNextFloorNumber([1, 5])).toBe(6);
+  });
+
+  test('starts at 1 for a building without floors', () => {
+    expect(getNextFloorNumber([])).toBe(1);
+    expect(getNextFloorNumber(undefined)).toBe(1);
+    expect(getNextFloorNumber([null, NaN])).toBe(1);
+  });
+
+  test('refuses to exceed the limit enforced by firestore.rules', () => {
+    expect(getNextFloorNumber([MAX_FLOOR_NUMBER - 1])).toBe(MAX_FLOOR_NUMBER);
+    expect(() => getNextFloorNumber([MAX_FLOOR_NUMBER])).toThrow(RangeError);
   });
 });

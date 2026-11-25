@@ -23,6 +23,7 @@ import {
   updateDoc,
   deleteDoc,
   where,
+  runTransaction,
   writeBatch,
 } from 'firebase/firestore';
 
@@ -271,5 +272,57 @@ describe('minimal building documents (e.g. created by hand in the console)', () 
       await deleteDoc(doc(context.firestore(), 'buildings/ENG_MAIN'));
     });
     await assertSucceeds(seedBatch(listedAdminDb()).commit());
+  });
+});
+
+describe('Map Editor "Add Floor" (dbService.addFloor transaction)', () => {
+  /** The exact writes dbService.addFloor makes, inside a transaction. */
+  const addFloorTransaction = (db, floorNumber, buildingChanges) => runTransaction(db, async (tx) => {
+    const id = `ENG_MAIN_FL${String(floorNumber).padStart(2, '0')}`;
+    await tx.get(doc(db, 'buildings/ENG_MAIN'));
+    await tx.get(doc(db, `floors/${id}`));
+    tx.set(doc(db, `floors/${id}`), {
+      building_id: 'ENG_MAIN',
+      floor_number: floorNumber,
+      floor_plan_image_url: '',
+      graph_topology: { nodes: [], edges: [] },
+    });
+    tx.update(doc(db, 'buildings/ENG_MAIN'), {
+      isMapUpdated: true,
+      last_updated_timestamp: '2026-11-25T08:00:00.000Z',
+      ...buildingChanges,
+    });
+  });
+
+  test('an admin can add the next floor and bump total_floors', async () => {
+    await assertSucceeds(addFloorTransaction(listedAdminDb(), 2, { total_floors: 2 }));
+  });
+
+  test('default_floor can be set when the building has none', async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'buildings/ENG_MAIN'), {
+        building_id: 'ENG_MAIN', building_name: 'Engineering Main Building',
+      });
+    });
+    await assertSucceeds(addFloorTransaction(listedAdminDb(), 2, { total_floors: 2, default_floor: 1 }));
+  });
+
+  test('double-digit floors are accepted (ENG_MAIN_FL10)', async () => {
+    await assertSucceeds(addFloorTransaction(claimAdminDb(), 10, { total_floors: 10 }));
+  });
+
+  test('non-admins cannot add floors', async () => {
+    await assertFails(addFloorTransaction(userDb(), 2, { total_floors: 2 }));
+    await assertFails(addFloorTransaction(publicDb(), 2, { total_floors: 2 }));
+  });
+
+  test('floor numbers above the rules limit are rejected', async () => {
+    await assertFails(addFloorTransaction(listedAdminDb(), 201, { total_floors: 201 }));
+  });
+
+  test('re-creating an existing floor counts as an update and keeps identity fields', async () => {
+    // addFloor refuses this client-side; the rules would still only allow an
+    // identical building_id / floor_number.
+    await assertSucceeds(addFloorTransaction(listedAdminDb(), 1, { total_floors: 2 }));
   });
 });
