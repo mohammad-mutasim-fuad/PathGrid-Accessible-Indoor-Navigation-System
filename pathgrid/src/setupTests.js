@@ -5,6 +5,13 @@
 import '@testing-library/jest-dom';
 import { TextDecoder, TextEncoder } from 'util';
 
+// Keep tests hermetic: CRA loads pathgrid/.env for `npm test` too, which would
+// point the suite at the real Firebase project. Tests that need a "configured"
+// Firebase mock services/firebase explicitly.
+Object.keys(process.env)
+  .filter((key) => key.startsWith('REACT_APP_FIREBASE_'))
+  .forEach((key) => { delete process.env[key]; });
+
 // React Router v7 needs TextEncoder/TextDecoder, which CRA's jsdom (Jest 27)
 // does not provide.
 if (typeof global.TextEncoder === 'undefined') global.TextEncoder = TextEncoder;

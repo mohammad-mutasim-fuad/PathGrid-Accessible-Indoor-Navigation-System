@@ -1,11 +1,70 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building, Database, LogOut, UserRound } from 'lucide-react';
+import {
+  Building, Database, DatabaseBackup, LogOut, UserRound,
+} from 'lucide-react';
 import { useAdminAuth } from './AdminAuthContext';
 import { useAdminData } from './AdminDataContext';
 import { app, isFirebaseConfigured } from '../../services/firebase';
-import { formatTimestamp } from '../../services/adminService';
-import { BUTTON, Card, PageHeader } from './AdminUi';
+import { describeFirestoreError, formatTimestamp } from '../../services/adminService';
+import {
+  BUTTON, Card, ErrorNotice, PageHeader,
+} from './AdminUi';
+
+/**
+ * Loads the bundled sample building (ENG_MAIN, 3 floors with rooms,
+ * corridors, stairs and elevators) into the current data source.
+ */
+function SampleDataCard({
+  buildingId, floorCount, mode, onSeed,
+}) {
+  const [state, setState] = useState({ status: 'idle', message: '' });
+
+  const handleSeed = async () => {
+    // eslint-disable-next-line no-alert
+    const confirmed = window.confirm(
+      'Load the sample building?\n\nThis REPLACES buildings/ENG_MAIN and floors ENG_MAIN_FL01–FL03 '
+      + `in ${mode === 'demo' ? 'this demo session' : 'Firestore'}. Other buildings are not touched.`,
+    );
+    if (!confirmed) return;
+    setState({ status: 'working', message: '' });
+    try {
+      const result = await onSeed();
+      setState({
+        status: 'done',
+        message: `Loaded ${result.buildings} building and ${result.floors} floors.`,
+      });
+    } catch (error) {
+      setState({ status: 'error', message: describeFirestoreError(error) });
+    }
+  };
+
+  return (
+    <Card title="Sample data" icon={DatabaseBackup}>
+      <p className="text-sm text-slate-700">
+        {floorCount === 0
+          ? `"${buildingId ?? 'This building'}" has no floors yet. `
+          : ''}
+        Load the bundled sample building <code className="rounded bg-slate-100 px-1">ENG_MAIN</code>: three floors with
+        rooms, corridors, stairs, elevators (one out of service) and accessibility flags. You can then edit it in the Map
+        Editor.
+      </p>
+      {state.status === 'error' && <div className="mt-4"><ErrorNotice message={state.message} /></div>}
+      {state.status === 'done' && (
+        <p role="status" className="mt-4 text-sm font-medium text-emerald-800">{state.message}</p>
+      )}
+      <button
+        type="button"
+        onClick={handleSeed}
+        disabled={state.status === 'working'}
+        className={`${BUTTON.secondary} mt-4`}
+      >
+        <DatabaseBackup aria-hidden="true" className="h-4 w-4" />
+        {state.status === 'working' ? 'Loading sample data…' : 'Load sample building'}
+      </button>
+    </Card>
+  );
+}
 
 function DetailList({ items }) {
   return (
@@ -25,7 +84,9 @@ function DetailList({ items }) {
  */
 export default function Settings() {
   const { user, isDemo, signOut } = useAdminAuth();
-  const { building, floors, mode } = useAdminData();
+  const {
+    building, floors, mode, seedSampleData,
+  } = useAdminData();
   const navigate = useNavigate();
   const [signingOut, setSigningOut] = useState(false);
 
@@ -92,6 +153,13 @@ export default function Settings() {
             ]}
           />
         </Card>
+
+        <SampleDataCard
+          buildingId={building?.building_id}
+          floorCount={floors.length}
+          mode={mode}
+          onSeed={seedSampleData}
+        />
       </div>
     </div>
   );

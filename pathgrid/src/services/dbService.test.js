@@ -4,6 +4,8 @@
  */
 import { isFirebaseConfigured, firebaseConfigError } from './firebase';
 import {
+  normalizeBuilding,
+  normalizeFloor,
   getBuilding,
   getBuildingFloors,
   getFloor,
@@ -73,5 +75,37 @@ describe('dbService without Firebase configuration', () => {
   test('saveFloorTopology validates before touching Firestore', async () => {
     await expect(saveFloorTopology('ENG_MAIN', 1, { nodes: [{ id: 'A' }], edges: [] }))
       .rejects.toThrow(/Invalid graph_topology/);
+  });
+});
+
+describe('normalizing minimal Firestore documents', () => {
+  test('a building with only { name } gets building_id from the doc id', () => {
+    expect(normalizeBuilding('ENG_MAIN', { name: 'Engineering Main Building' })).toEqual({
+      id: 'ENG_MAIN',
+      name: 'Engineering Main Building',
+      building_id: 'ENG_MAIN',
+      building_name: 'Engineering Main Building',
+    });
+  });
+
+  test('complete building documents are left as they are', () => {
+    const doc = { building_id: 'ENG_MAIN', building_name: 'Engineering Complex', total_floors: 3 };
+    expect(normalizeBuilding('ENG_MAIN', doc)).toEqual({ id: 'ENG_MAIN', ...doc });
+    expect(normalizeBuilding('X', { building_id: '  ' }).building_id).toBe('X');
+    expect(normalizeBuilding('X', undefined).building_name).toBe('X');
+  });
+
+  test('floors get floor_number from the _FLnn id and always have topology arrays', () => {
+    expect(normalizeFloor('ENG_MAIN_FL02', { building_id: 'ENG_MAIN' })).toEqual({
+      id: 'ENG_MAIN_FL02',
+      building_id: 'ENG_MAIN',
+      floor_number: 2,
+      graph_topology: { nodes: [], edges: [] },
+    });
+    expect(normalizeFloor('X', { floor_number: '3', graph_topology: { nodes: 'bad' } })).toMatchObject({
+      floor_number: 3,
+      graph_topology: { nodes: [], edges: [] },
+    });
+    expect(normalizeFloor('NO_NUMBER', {}).floor_number).toBeNull();
   });
 });

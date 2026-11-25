@@ -311,7 +311,14 @@ export default function Editor() {
     building, floors, saveFloorTopology, mode,
   } = useAdminData();
 
-  const floorNumbers = useMemo(() => floors.map((f) => f.floor_number).sort((a, b) => a - b), [floors]);
+  // Existing floors plus 1..total_floors (at least Floor 1), so a building with
+  // no floor documents yet can still be drawn; saving creates the floor.
+  const floorNumbers = useMemo(() => {
+    const declared = Number.isInteger(building?.total_floors) && building.total_floors > 0 ? building.total_floors : 1;
+    const numbers = new Set(floors.map((f) => f.floor_number));
+    for (let n = 1; n <= declared; n += 1) numbers.add(n);
+    return [...numbers].sort((a, b) => a - b);
+  }, [floors, building]);
   const [floorNumber, setFloorNumber] = useState(() => (
     floorNumbers.includes(building?.default_floor) ? building.default_floor : floorNumbers[0] ?? 1
   ));

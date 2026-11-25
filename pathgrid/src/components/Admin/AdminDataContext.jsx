@@ -2,14 +2,21 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
 import { useAdminAuth } from './AdminAuthContext';
-import { getDemoAdminRepository, liveAdminRepository } from '../../services/adminService';
+import {
+  getDemoAdminRepository, liveAdminRepository, resolveBuildingId, withTimeout,
+} from '../../services/adminService';
 
 const AdminDataContext = createContext(null);
+
+/** Upper bound for one load so the UI can never sit on "Loading…" forever. */
+export const ADMIN_LOAD_TIMEOUT_MS = 20000;
 
 /**
  * Loads the selected building and its floors for the admin pages and exposes
  * write actions that refresh the data afterwards. Uses the in-memory demo
  * repository for demo sessions and Firestore otherwise.
+ *
+ * Every load ends in exactly one of: 'ready', 'empty' or 'error'.
  */
 export function AdminDataProvider({ children }) {
   const { isDemo } = useAdminAuth();
@@ -19,6 +26,7 @@ export function AdminDataProvider({ children }) {
   );
 
   const [buildings, setBuildings] = useState([]);
+  const [requestedBuildingId, setRequestedBuildingId] = useState(null);
   const [buildingId, setBuildingId] = useState(null);
   const [data, setData] = useState({ building: null, floors: [] });
   const [status, setStatus] = useState('loading');
@@ -31,49 +39,60 @@ export function AdminDataProvider({ children }) {
     return () => { mountedRef.current = false; };
   }, []);
 
-  // Building list.
+  // One sequential load: building list -> pick a building -> its floors.
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
-    repository.listBuildings()
-      .then((list) => {
-        if (cancelled) return;
-        setBuildings(list);
-        if (list.length === 0) {
-          setStatus('empty');
-          return;
-        }
-        setBuildingId((current) => (list.some((b) => b.building_id === current)
-          ? current
-          : list[0].building_id));
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err.message);
-        setStatus('error');
-      });
-    return () => { cancelled = true; };
-  }, [repository, reloadKey]);
+    setError('');
 
+    (async () => {
+      const list = await withTimeout(
+        repository.listBuildings(),
+        ADMIN_LOAD_TIMEOUT_MS,
+        'Loading the building list timed out.',
+      );
+      if (cancelled) return;
+      setBuildings(list);
+
+      const selectedId = resolveBuildingId(list, requestedBuildingId);
+      if (!selectedId) {
+        setBuildingId(null);
+        setData({ building: null, floors: [] });
+        setStatus('empty');
+        return;
+      }
+
+      const result = await withTimeout(
+        repository.loadBuilding(selectedId),
+        ADMIN_LOAD_TIMEOUT_MS,
+        `Loading building "${selectedId}" timed out.`,
+      );
+      if (cancelled) return;
+      setBuildingId(selectedId);
+      setData(result);
+      setStatus('ready');
+    })().catch((err) => {
+      if (cancelled) return;
+      setError(err?.message || 'Unknown error.');
+      setStatus('error');
+    });
+
+    return () => { cancelled = true; };
+  }, [repository, requestedBuildingId, reloadKey]);
+
+  /** Re-reads the current building after a write, without a loading flash. */
   const refresh = useCallback(async () => {
     if (!buildingId) return;
-    const result = await repository.loadBuilding(buildingId);
+    const result = await withTimeout(
+      repository.loadBuilding(buildingId),
+      ADMIN_LOAD_TIMEOUT_MS,
+      `Refreshing building "${buildingId}" timed out.`,
+    );
     if (!mountedRef.current) return;
     setData(result);
     setError('');
     setStatus('ready');
   }, [repository, buildingId]);
-
-  // Selected building data.
-  useEffect(() => {
-    if (!buildingId) return;
-    setStatus('loading');
-    refresh().catch((err) => {
-      if (!mountedRef.current) return;
-      setError(err.message);
-      setStatus('error');
-    });
-  }, [refresh, buildingId]);
 
   const setElevatorOutOfService = useCallback(async (elevatorKey, outOfService) => {
     const updated = await repository.setElevatorOutOfService(buildingId, elevatorKey, outOfService);
@@ -91,16 +110,23 @@ export function AdminDataProvider({ children }) {
     await refresh();
   }, [repository, buildingId, refresh]);
 
+  /** Re-runs the full load (always, even if the selected building is unchanged). */
   const retry = useCallback(() => {
-    setError('');
     setReloadKey((key) => key + 1);
   }, []);
+
+  /** Writes the bundled sample building and its floors, then reloads. */
+  const seedSampleData = useCallback(async () => {
+    const result = await repository.seedSampleData();
+    setReloadKey((key) => key + 1);
+    return result;
+  }, [repository]);
 
   const value = useMemo(() => ({
     mode: repository.mode,
     buildings,
     buildingId,
-    selectBuilding: setBuildingId,
+    selectBuilding: setRequestedBuildingId,
     building: data.building,
     floors: data.floors,
     status,
@@ -110,9 +136,10 @@ export function AdminDataProvider({ children }) {
     setElevatorOutOfService,
     setEdgeOutOfService,
     saveFloorTopology,
+    seedSampleData,
   }), [
     repository.mode, buildings, buildingId, data, status, error, refresh, retry,
-    setElevatorOutOfService, setEdgeOutOfService, saveFloorTopology,
+    setElevatorOutOfService, setEdgeOutOfService, saveFloorTopology, seedSampleData,
   ]);
 
   return <AdminDataContext.Provider value={value}>{children}</AdminDataContext.Provider>;

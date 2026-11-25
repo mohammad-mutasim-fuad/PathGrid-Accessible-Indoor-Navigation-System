@@ -56,7 +56,49 @@ const buildingRef = (firestore, buildingId) => doc(firestore, BUILDINGS_COLLECTI
 const floorRef = (firestore, buildingId, floorNumber) =>
   doc(firestore, FLOORS_COLLECTION, floorDocId(buildingId, floorNumber));
 
-const snapshotData = (snap) => (snap.exists() ? { id: snap.id, ...snap.data() } : null);
+const FLOOR_ID_PATTERN = /_FL(\d+)$/;
+
+/**
+ * Fills in fields that minimal / hand-made building documents may lack:
+ * building_id falls back to the document id, building_name to `name`.
+ */
+export const normalizeBuilding = (id, data = {}) => {
+  const buildingId = typeof data.building_id === 'string' && data.building_id.trim()
+    ? data.building_id
+    : id;
+  return {
+    ...data,
+    id,
+    building_id: buildingId,
+    building_name: data.building_name ?? data.name ?? buildingId,
+  };
+};
+
+/**
+ * Fills in floor fields: floor_number falls back to the "_FLnn" suffix of the
+ * document id, and graph_topology always has nodes/edges arrays.
+ */
+export const normalizeFloor = (id, data = {}) => {
+  const raw = data.floor_number;
+  const parsed = raw === null || raw === undefined || raw === '' ? NaN : Number(raw);
+  const fromId = FLOOR_ID_PATTERN.exec(id ?? '');
+  let floorNumber = null;
+  if (Number.isInteger(parsed)) floorNumber = parsed;
+  else if (fromId) floorNumber = Number(fromId[1]);
+  const topology = data.graph_topology ?? {};
+  return {
+    ...data,
+    id,
+    floor_number: floorNumber,
+    graph_topology: {
+      nodes: Array.isArray(topology.nodes) ? topology.nodes : [],
+      edges: Array.isArray(topology.edges) ? topology.edges : [],
+    },
+  };
+};
+
+const buildingFromSnapshot = (snap) => (snap.exists() ? normalizeBuilding(snap.id, snap.data()) : null);
+const floorFromSnapshot = (snap) => (snap.exists() ? normalizeFloor(snap.id, snap.data()) : null);
 
 /** Fields written whenever an admin changes anything a navigating user relies on. */
 const mapUpdatedFields = () => ({
@@ -78,14 +120,14 @@ const assertBuildingId = (buildingId) => {
 export const listBuildings = async () => {
   if (!isFirebaseConfigured) return getMockBuildings();
   const snap = await getDocs(collection(db, BUILDINGS_COLLECTION));
-  return snap.docs.map(snapshotData);
+  return snap.docs.map(buildingFromSnapshot);
 };
 
 /** Reads one building's metadata, or null if it does not exist. */
 export const getBuilding = async (buildingId) => {
   assertBuildingId(buildingId);
   if (!isFirebaseConfigured) return getMockBuilding(buildingId);
-  return snapshotData(await getDoc(buildingRef(db, buildingId)));
+  return buildingFromSnapshot(await getDoc(buildingRef(db, buildingId)));
 };
 
 /** Reads one floor document, or null if it does not exist. */
@@ -94,12 +136,14 @@ export const getFloor = async (buildingId, floorNumber) => {
   if (!isFirebaseConfigured) {
     return getMockFloors(buildingId).find((f) => f.floor_number === floorNumber) ?? null;
   }
-  return snapshotData(await getDoc(floorRef(db, buildingId, floorNumber)));
+  return floorFromSnapshot(await getDoc(floorRef(db, buildingId, floorNumber)));
 };
 
 /**
  * Reads every floor of a building, sorted by floor_number. Sorting happens
- * client-side so no composite Firestore index is required.
+ * client-side so no composite Firestore index is required. Resolves to an
+ * empty array when the building has no floors yet; floor documents whose
+ * floor number cannot be determined are skipped.
  */
 export const getBuildingFloors = async (buildingId) => {
   assertBuildingId(buildingId);
@@ -107,7 +151,10 @@ export const getBuildingFloors = async (buildingId) => {
   const snap = await getDocs(
     query(collection(db, FLOORS_COLLECTION), where('building_id', '==', buildingId)),
   );
-  return snap.docs.map(snapshotData).sort((a, b) => a.floor_number - b.floor_number);
+  return snap.docs
+    .map(floorFromSnapshot)
+    .filter((floor) => floor && floor.floor_number !== null)
+    .sort((a, b) => a.floor_number - b.floor_number);
 };
 
 /**
@@ -178,7 +225,7 @@ export const subscribeToBuilding = (buildingId, onChange, onError) => {
   }
   return onSnapshot(
     buildingRef(db, buildingId),
-    (snap) => onChange(snapshotData(snap)),
+    (snap) => onChange(buildingFromSnapshot(snap)),
     (error) => onError?.(error),
   );
 };
@@ -282,13 +329,19 @@ export const setElevatorOutOfService = async (buildingId, elevatorKey, outOfServ
   if (typeof outOfService !== 'boolean') throw new TypeError('outOfService must be a boolean.');
   const firestore = requireDb();
 
+  // Discover the building's floor documents first (transactions cannot run
+  // queries); the documents themselves are then read inside the transaction.
+  // This does not depend on `total_floors`, which minimal documents may lack.
+  const floorQuery = await getDocs(
+    query(collection(firestore, FLOORS_COLLECTION), where('building_id', '==', buildingId)),
+  );
+  const refs = floorQuery.docs.map((floorDoc) => floorDoc.ref);
+
   return runTransaction(firestore, async (transaction) => {
     const bRef = buildingRef(firestore, buildingId);
     const buildingSnap = await transaction.get(bRef);
     if (!buildingSnap.exists()) throw new Error(`Building "${buildingId}" was not found.`);
 
-    const totalFloors = buildingSnap.data().total_floors ?? 0;
-    const refs = Array.from({ length: totalFloors }, (_, i) => floorRef(firestore, buildingId, i + 1));
     const floorSnaps = await Promise.all(refs.map((ref) => transaction.get(ref)));
 
     let updatedCount = 0;
@@ -296,7 +349,7 @@ export const setElevatorOutOfService = async (buildingId, elevatorKey, outOfServ
       if (!snap.exists()) return;
       const topology = snap.data().graph_topology ?? { nodes: [], edges: [] };
       let changed = false;
-      const nodes = topology.nodes.map((node) => {
+      const nodes = (topology.nodes ?? []).map((node) => {
         const matches = node.type === 'elevator'
           && (node.transition_id === elevatorKey || node.id === elevatorKey);
         if (!matches) return node;

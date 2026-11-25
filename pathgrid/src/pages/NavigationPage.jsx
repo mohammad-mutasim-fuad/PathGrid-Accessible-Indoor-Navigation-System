@@ -63,10 +63,10 @@ export default function NavigationPage() {
 
         setBuildingData(data);
         const floorNumbers = data.floors.map((floor) => floor.floor_number);
-        const initialFloor = floorNumbers.includes(qr.floor)
-          ? qr.floor
-          : (data.building.default_floor ?? floorNumbers[0]);
-        setActiveFloor((current) => current ?? initialFloor);
+        let initialFloor = floorNumbers[0] ?? null;
+        if (floorNumbers.includes(qr.floor)) initialFloor = qr.floor;
+        else if (floorNumbers.includes(data.building.default_floor)) initialFloor = data.building.default_floor;
+        setActiveFloor((current) => (floorNumbers.includes(current) ? current : initialFloor));
         setLoadState({ status: 'ready', error: '' });
 
         // PRD 5.2: refresh the graph when an admin publishes a facility change.
@@ -219,7 +219,16 @@ export default function NavigationPage() {
           </div>
         )}
 
-        {buildingData && activeFloor !== null && loadState.status !== 'error' && (
+        {buildingData && buildingData.floors.length === 0 && loadState.status !== 'error' && (
+          <div role="status" className="mx-auto flex max-w-md flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+            <p className="text-lg font-semibold text-slate-900">
+              {`${buildingData.building.building_name ?? 'This building'} has no floor maps yet.`}
+            </p>
+            <p className="text-slate-700">Please check back soon, or ask facility staff for directions.</p>
+          </div>
+        )}
+
+        {buildingData && buildingData.floors.length > 0 && activeFloor !== null && loadState.status !== 'error' && (
           <>
             <RoomSelector
               locations={locations}
