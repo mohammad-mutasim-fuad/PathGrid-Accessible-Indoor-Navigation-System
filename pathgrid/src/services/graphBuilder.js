@@ -13,6 +13,23 @@ export const DEFAULT_TRANSITION_WEIGHTS = Object.freeze({
   stairs: 15,
 });
 
+/** Highest floor number firestore.rules accepts (floor_number / total_floors <= 200). */
+export const MAX_FLOOR_NUMBER = 200;
+
+/**
+ * The floor that "Add floor" creates: one above the highest existing floor,
+ * or 1 for a building without floors. Throws past MAX_FLOOR_NUMBER.
+ * @param {number[]} floorNumbers - existing floor numbers (any order)
+ */
+export const getNextFloorNumber = (floorNumbers) => {
+  const existing = (floorNumbers ?? []).filter((n) => Number.isInteger(n));
+  const next = existing.length === 0 ? 1 : Math.max(...existing) + 1;
+  if (next > MAX_FLOOR_NUMBER) {
+    throw new RangeError(`A building can have at most ${MAX_FLOOR_NUMBER} floors.`);
+  }
+  return next;
+};
+
 /** Firestore document id for a floor, e.g. ("ENG_MAIN", 1) -> "ENG_MAIN_FL01". */
 export const floorDocId = (buildingId, floorNumber) => {
   if (!buildingId || typeof buildingId !== 'string') {

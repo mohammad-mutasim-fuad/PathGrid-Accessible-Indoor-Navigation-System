@@ -11,6 +11,8 @@ import { AppRoutes } from '../../App';
 import { getDemoAdminRepository, listElevators, resetDemoAdminRepository } from '../../services/adminService';
 // Warm the lazily loaded admin chunk so tests don't race a cold module load.
 import './AdminRoutes';
+import { buildBuildingGraph } from '../../services/graphBuilder';
+import { findShortestPath } from '../../services/aStarEngine';
 
 const renderAt = (path) => render(
   <MemoryRouter initialEntries={[path]}>
@@ -242,4 +244,78 @@ describe('admin map editor', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(2);
     confirmSpy.mockRestore();
   });
+});
+
+describe('admin map editor: Add Floor', () => {
+  const nodesTitle = (floor, count) => `Nodes on floor ${floor} (${count})`;
+
+  test('creates the next floor, switches to it and leaves other floors intact', async () => {
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    expect(within(screen.getByLabelText('Floor')).getAllByRole('option').map((o) => o.textContent))
+      .toEqual(['Floor 1', 'Floor 2', 'Floor 3']);
+
+    userEvent.click(screen.getByRole('button', { name: 'Add Floor' }));
+
+    expect(await screen.findByText('Floor 4 added. You can start drawing it now.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Floor')).toHaveValue('4');
+    expect(screen.getByText(nodesTitle(4, 0))).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save floor 4' })).toBeDisabled();
+
+    const { building, floors } = await getDemoAdminRepository().loadBuilding('ENG_MAIN');
+    expect(floors.map((f) => [f.floor_number, f.graph_topology.nodes.length, f.graph_topology.edges.length]))
+      .toEqual([[1, 18, 17], [2, 17, 17], [3, 16, 15], [4, 0, 0]]);
+    expect(building).toMatchObject({ total_floors: 4, default_floor: 1 });
+
+    // The new floor is editable and saves like any other.
+    userEvent.click(screen.getByRole('button', { name: 'Add at center' }));
+    userEvent.click(screen.getByRole('button', { name: 'Save floor 4' }));
+    expect(await screen.findByText('Floor 4 saved (demo session only).')).toBeInTheDocument();
+    expect((await getDemoAdminRepository().loadBuilding('ENG_MAIN')).floors[3].graph_topology.nodes)
+      .toHaveLength(1);
+  });
+
+  test('shows progress and ignores double-clicks while the floor is being created', async () => {
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    const button = screen.getByRole('button', { name: 'Add Floor' });
+
+    userEvent.click(button);
+    userEvent.click(button);
+
+    expect(screen.getByRole('button', { name: 'Adding floor…' })).toBeDisabled();
+    expect(await screen.findByText('Floor 4 added. You can start drawing it now.')).toBeInTheDocument();
+    const { floors } = await getDemoAdminRepository().loadBuilding('ENG_MAIN');
+    expect(floors.map((f) => f.floor_number)).toEqual([1, 2, 3, 4]);
+  });
+
+  test('asks before discarding unsaved edits, and does nothing if cancelled', async () => {
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    userEvent.click(screen.getByRole('button', { name: 'Add at center' }));
+    const confirmSpy = jest.spyOn(window, 'confirm').mockReturnValue(false);
+
+    userEvent.click(screen.getByRole('button', { name: 'Add Floor' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/unsaved changes/));
+    expect(screen.getByText(nodesTitle(1, 19))).toBeInTheDocument();
+    expect((await getDemoAdminRepository().loadBuilding('ENG_MAIN')).floors).toHaveLength(3);
+    confirmSpy.mockRestore();
+  });
+
+  test('the public map picks up the new floor', async () => {
+    await enterDemoAt('/admin/editor', 'Map Editor');
+    userEvent.click(screen.getByRole('button', { name: 'Add Floor' }));
+    await screen.findByText('Floor 4 added. You can start drawing it now.');
+
+    const { floors } = await getDemoAdminRepository().loadBuilding('ENG_MAIN');
+    const graph = buildBuildingGraph(floors);
+    expect(new Set(graph.nodes.map((n) => n.floor))).toEqual(new Set([1, 2, 3]));
+    expect(findShortestPath(graph, 'N100', 'N304', true).found).toBe(true);
+  });
+});
+
+test('regression: switching floors never shows the previous floor\'s graph, even for one render', async () => {
+  await enterDemoAt('/admin/editor', 'Map Editor');
+  userEvent.selectOptions(screen.getByLabelText('Floor'), '2');
+  // Checked synchronously right after the switch (no waitFor).
+  expect(screen.getByText('Nodes on floor 2 (17)')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Save floor 2' })).toBeDisabled();
 });

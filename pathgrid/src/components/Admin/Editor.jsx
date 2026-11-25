@@ -1,8 +1,8 @@
 import {
-  useCallback, useEffect, useMemo, useReducer, useState,
+  useCallback, useEffect, useMemo, useReducer, useRef, useState,
 } from 'react';
 import {
-  CirclePlus, Info, Link2, MousePointer2, Move, Redo2, RotateCcw, Save, Search, Spline, Trash, Undo2,
+  CirclePlus, Info, Link2, LoaderCircle, MousePointer2, Move, Plus, Redo2, RotateCcw, Save, Search, Spline, Trash, Undo2,
 } from 'lucide-react';
 import { useAdminData } from './AdminDataContext';
 import EditorCanvas from './EditorCanvas';
@@ -25,6 +25,7 @@ import {
   validateFloorForBuilding,
 } from '../../services/topologyEditor';
 import { getCanvasSize } from '../../services/routeUtils';
+import { describeFirestoreError } from '../../services/adminService';
 
 const EMPTY_TOPOLOGY = Object.freeze({ nodes: [], edges: [] });
 const SNAP_SIZE = 10;
@@ -308,17 +309,16 @@ function EdgePanel({
  */
 export default function Editor() {
   const {
-    building, floors, saveFloorTopology, mode,
+    building, floors, saveFloorTopology, addFloor, mode,
   } = useAdminData();
 
-  // Existing floors plus 1..total_floors (at least Floor 1), so a building with
-  // no floor documents yet can still be drawn; saving creates the floor.
+  // Real floor documents only. A building without floors shows an unsaved
+  // "Floor 1" draft (saving creates it); more floors come from "+ Add Floor".
   const floorNumbers = useMemo(() => {
-    const declared = Number.isInteger(building?.total_floors) && building.total_floors > 0 ? building.total_floors : 1;
-    const numbers = new Set(floors.map((f) => f.floor_number));
-    for (let n = 1; n <= declared; n += 1) numbers.add(n);
-    return [...numbers].sort((a, b) => a - b);
-  }, [floors, building]);
+    const numbers = [...new Set(floors.map((f) => f.floor_number))].sort((a, b) => a - b);
+    return numbers.length > 0 ? numbers : [1];
+  }, [floors]);
+  const floorExists = useCallback((n) => floors.some((f) => f.floor_number === n), [floors]);
   const [floorNumber, setFloorNumber] = useState(() => (
     floorNumbers.includes(building?.default_floor) ? building.default_floor : floorNumbers[0] ?? 1
   ));
@@ -332,6 +332,9 @@ export default function Editor() {
   const [selection, setSelection] = useState(null);
   const [connectSourceId, setConnectSourceId] = useState(null);
   const [nodeQuery, setNodeQuery] = useState('');
+  const [addFloorState, setAddFloorState] = useState({ status: 'idle', message: '' });
+  // A ref (not just state) so two rapid clicks cannot both start a request.
+  const addingFloorRef = useRef(false);
   const [validationErrors, setValidationErrors] = useState([]);
   const [saveState, setSaveState] = useState({ status: 'idle', message: '' });
 
@@ -493,12 +496,47 @@ export default function Editor() {
     setConnectSourceId(null);
   };
 
+  /**
+   * Switches floors and loads that floor's graph in the SAME state update, so
+   * no render ever shows one floor's number with another floor's nodes (which
+   * would make "Save" copy the old floor's graph onto the new one).
+   */
+  const switchToFloor = useCallback((next, topology) => {
+    setFloorNumber(next);
+    dispatch({ type: 'reset', topology: topology ?? EMPTY_TOPOLOGY });
+    setSelection(null);
+    setConnectSourceId(null);
+  }, []);
+
   const changeFloor = (next) => {
     if (next === floorNumber) return;
     // eslint-disable-next-line no-alert
     if (dirty && !window.confirm(`Discard unsaved changes on floor ${floorNumber}?`)) return;
-    setFloorNumber(next);
+    switchToFloor(next, floors.find((f) => f.floor_number === next)?.graph_topology);
+    setAddFloorState({ status: 'idle', message: '' });
     clearTransient();
+  };
+
+  const handleAddFloor = async () => {
+    if (addingFloorRef.current) return;
+    if (dirty
+      // eslint-disable-next-line no-alert
+      && !window.confirm(`Floor ${floorNumber} has unsaved changes. Discard them and add a new floor?`)) {
+      return;
+    }
+    addingFloorRef.current = true;
+    setAddFloorState({ status: 'adding', message: '' });
+    try {
+      const newFloor = await addFloor();
+      // A new floor always starts with an empty graph.
+      switchToFloor(newFloor, EMPTY_TOPOLOGY);
+      clearTransient();
+      setAddFloorState({ status: 'added', message: `Floor ${newFloor} added. You can start drawing it now.` });
+    } catch (error) {
+      setAddFloorState({ status: 'error', message: `Could not add a floor. ${describeFirestoreError(error)}` });
+    } finally {
+      addingFloorRef.current = false;
+    }
   };
 
   const discard = () => {
@@ -607,14 +645,32 @@ export default function Editor() {
           <label htmlFor="editor-floor" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
             Floor
           </label>
-          <select
-            id="editor-floor"
-            value={floorNumber}
-            onChange={(event) => changeFloor(Number(event.target.value))}
-            className={`${INPUT} w-32`}
-          >
-            {floorNumbers.map((n) => <option key={n} value={n}>{`Floor ${n}`}</option>)}
-          </select>
+          <div className="flex gap-2">
+            <select
+              id="editor-floor"
+              value={floorNumber}
+              onChange={(event) => changeFloor(Number(event.target.value))}
+              disabled={addFloorState.status === 'adding'}
+              className={`${INPUT} w-36`}
+            >
+              {floorNumbers.map((n) => (
+                <option key={n} value={n}>{floorExists(n) ? `Floor ${n}` : `Floor ${n} (new)`}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleAddFloor}
+              disabled={addFloorState.status === 'adding'}
+              aria-busy={addFloorState.status === 'adding'}
+              title="Create the next floor above the highest existing one"
+              className={`${BUTTON.secondary} h-10 shrink-0`}
+            >
+              {addFloorState.status === 'adding'
+                ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+                : <Plus aria-hidden="true" className="h-4 w-4" />}
+              {addFloorState.status === 'adding' ? 'Adding floor…' : 'Add Floor'}
+            </button>
+          </div>
         </div>
 
         <div role="group" aria-label="Editing tool">
@@ -693,6 +749,13 @@ export default function Editor() {
           </button>
         </div>
       </div>
+
+      {addFloorState.status === 'added' && (
+        <p role="status" className="-mt-2 mb-4 text-sm font-medium text-emerald-800">{addFloorState.message}</p>
+      )}
+      {addFloorState.status === 'error' && (
+        <div className="-mt-2 mb-4"><ErrorNotice message={addFloorState.message} /></div>
+      )}
 
       {/* Fixed-height workspace: the canvas never resizes when the side panel grows. */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">

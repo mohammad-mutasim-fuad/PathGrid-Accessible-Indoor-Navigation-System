@@ -117,6 +117,13 @@ export function AdminDataProvider({ children }) {
     await refresh();
   }, [repository, buildingId, refresh]);
 
+  /** Creates the next floor, reloads the building and resolves to the new floor number. */
+  const addFloor = useCallback(async () => {
+    const floorNumber = await repository.addFloor(buildingId);
+    await refresh();
+    return floorNumber;
+  }, [repository, buildingId, refresh]);
+
   /** Re-runs the full load (always, even if the selected building is unchanged). */
   const retry = useCallback(() => {
     setReloadKey((key) => key + 1);
@@ -148,9 +155,10 @@ export function AdminDataProvider({ children }) {
     setEdgeOutOfService,
     saveFloorTopology,
     seedSampleData,
+    addFloor,
   }), [
     repository.mode, buildings, buildingId, data, status, error, refresh, retry,
-    setElevatorOutOfService, setEdgeOutOfService, saveFloorTopology, seedSampleData,
+    setElevatorOutOfService, setEdgeOutOfService, saveFloorTopology, seedSampleData, addFloor,
   ]);
 
   return <AdminDataContext.Provider value={value}>{children}</AdminDataContext.Provider>;

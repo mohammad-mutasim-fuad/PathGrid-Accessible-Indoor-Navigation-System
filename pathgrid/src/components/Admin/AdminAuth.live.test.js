@@ -45,6 +45,7 @@ jest.mock('../../services/adminService', () => {
       setElevatorOutOfService: jest.fn(),
       setEdgeOutOfService: jest.fn(),
       saveFloorTopology: jest.fn(),
+      addFloor: jest.fn(),
     },
   };
 });
@@ -77,6 +78,7 @@ beforeEach(() => {
   liveAdminRepository.setElevatorOutOfService.mockImplementation(backingStore.setElevatorOutOfService);
   liveAdminRepository.setEdgeOutOfService.mockImplementation(backingStore.setEdgeOutOfService);
   liveAdminRepository.saveFloorTopology.mockImplementation(backingStore.saveFloorTopology);
+  liveAdminRepository.addFloor.mockImplementation(backingStore.addFloor);
 });
 
 describe('route protection with Firebase Auth', () => {
@@ -162,5 +164,21 @@ describe('out-of-service toggles call the live repository', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Missing or insufficient permissions.');
     expect(screen.getByRole('switch', { name: 'Elevator 2 (East) out of service' })).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('Map Editor "Add Floor" with Firestore', () => {
+  test('a rejected write shows a clear error and keeps the current floor', async () => {
+    mockAuthState(ADMIN);
+    liveAdminRepository.addFloor.mockRejectedValueOnce(
+      Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }),
+    );
+    renderAt('/admin/editor');
+    userEvent.click(await screen.findByRole('button', { name: 'Add Floor' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not add a floor\. Firestore rejected this change/);
+    expect(screen.getByLabelText('Floor')).toHaveValue('1');
+    expect(screen.getByRole('button', { name: 'Add Floor' })).toBeEnabled();
+    expect(liveAdminRepository.addFloor).toHaveBeenCalledWith('ENG_MAIN');
   });
 });
